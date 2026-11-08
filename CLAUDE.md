@@ -17,7 +17,7 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 
 ## 開発の進め方
 
-- 作業計画とタスクは GitHub の Milestone / Issue / Project で管理する。docs/ には設計と仕様だけを書き、TODO や進捗は書かない
+- 作業計画とタスクは GitHub の Milestone / Issue / [Project](https://github.com/users/kken0201/projects/2) で管理する。docs/ には設計と仕様だけを書き、TODO や進捗は書かない
 - 実機で確認できた HID の仕様は docs/protocol.md に反映する
 - `hid/protocol.rs`（レポート解析）と `state.rs`（状態機械）は純粋関数にして単体テストを書く
 - コード中のコメントは日本語でよい
