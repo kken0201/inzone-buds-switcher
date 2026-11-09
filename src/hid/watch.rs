@@ -36,6 +36,8 @@ const REENUMERATE: Duration = Duration::from_secs(3);
 const IO_TIMEOUT_MS: u32 = 1000;
 /// 応答を待つ期間。応答は約 0.2〜0.4 秒で届く
 const RESPONSE_WINDOW: Duration = Duration::from_secs(5);
+/// 起動直後の `41 02` の応答をこれだけ待つ
+const SILENCE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HidEvent {
@@ -121,18 +123,31 @@ fn session(col: &Collection, tx: &Sender<HidEvent>) -> Result<()> {
     };
 
     query(SUB_LINK, &mut sent)?;
+    // 送信できたのに応答がないのは、両耳ともケース内のときだけ（protocol.md 2 章）。
+    // これを切断とみなさないと、ケース内で起動したあと取り出しても「Unknown から確定」になり切り替わらない
+    let mut silence_deadline =
+        sent.iter().any(|s| s.sub == SUB_LINK).then(|| Instant::now() + SILENCE_TIMEOUT);
     query(SUB_BATTERY, &mut sent)?;
     let mut next_poll = Instant::now() + BATTERY_POLL;
 
     loop {
-        let wait = next_poll.saturating_duration_since(Instant::now());
+        let until = silence_deadline.map_or(next_poll, |d| d.min(next_poll));
+        let wait = until.saturating_duration_since(Instant::now());
         if let Some(buf) = reader.wait(wait.as_millis() as u32)? {
             tracing::debug!("RX {}", hex(trim_zeros(buf)));
             sent.retain(|s| s.at.elapsed() < RESPONSE_WINDOW);
             if let Some(ev) = parse(buf).and_then(|p| to_event(p.report, p.origin, &mut sent)) {
+                silence_deadline = None;
                 if tx.send(ev).is_err() {
                     return Ok(());
                 }
+            }
+        }
+        if silence_deadline.is_some_and(|d| Instant::now() >= d) {
+            silence_deadline = None;
+            tracing::info!("接続の問い合わせに応答なし。両耳ともケース内とみなす");
+            if tx.send(HidEvent::Earbuds(Earbuds { left: false, right: false })).is_err() {
+                return Ok(());
             }
         }
         if Instant::now() >= next_poll {
