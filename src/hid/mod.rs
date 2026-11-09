@@ -6,6 +6,7 @@
 //! これを問い合わせるため、使い物にならないほど遅くなる。
 
 pub mod protocol;
+pub mod watch;
 
 use anyhow::{Context, Result, bail};
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
