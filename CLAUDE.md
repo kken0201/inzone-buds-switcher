@@ -22,22 +22,22 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 - `hid/protocol.rs`（レポート解析）、`state.rs`（状態機械）、`switch.rs`（切り替え先の判断）、`tray/view.rs`（ツールチップとメニューの中身）は純粋関数にして単体テストを書く
 - コード中のコメントは日本語でよい
 
-## コマンド（実装後に更新）
+## コマンド
 
 ```
 cargo build
-cargo run                              # 常駐して自動で切り替える（`run` と同じ）
 cargo test
-cargo run                              # トレイに常駐する
-cargo run -- probe                     # HID の生レポートを出力
-cargo run -- probe --battery 5         # 5 秒ごとにバッテリーを問い合わせる
-cargo run -- probe --query 02,04       # 指定したサブコマンドを 1 回ずつ問い合わせる
-cargo run -- watch                    # HID 監視スレッドのイベントをログに出す
-cargo run -- list                      # 再生デバイスの一覧（既定に * が付く）
+cargo run                                 # トレイに常駐して自動で切り替える（`run` と同じ）
+cargo run -- probe                        # HID の生レポートを出力
+cargo run -- probe --battery 5            # 5 秒ごとにバッテリーを問い合わせる
+cargo run -- probe --query 02,04          # 指定したサブコマンドを 1 回ずつ問い合わせる
+cargo run -- watch                        # HID 監視スレッドのイベントをログに出す（RUST_LOG=debug で生レポートも）
+cargo run -- list                         # 再生デバイスの一覧（既定に * が付く）
 cargo run -- set <id> [--communications]  # 既定の再生デバイスを設定
-cargo run -- watch                     # HID 監視スレッドのイベントをログに出す（RUST_LOG=debug で生レポートも）
-cargo build --release   # 配布用 exe
+cargo build --release                     # 配布用 exe
 ```
+
+リリースは `v<version>` のタグを push すると GitHub Actions が行う（手順は docs/design.md 6）。
 
 ## 参考実装（どちらも MIT）
 
