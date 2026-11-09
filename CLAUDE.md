@@ -19,7 +19,7 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 
 - 作業計画とタスクは GitHub の Milestone / Issue / [Project](https://github.com/users/kken0201/projects/2) で管理する。docs/ には設計と仕様だけを書き、TODO や進捗は書かない
 - 実機で確認できた HID の仕様は docs/protocol.md に反映する
-- `hid/protocol.rs`（レポート解析）と `state.rs`（状態機械）は純粋関数にして単体テストを書く
+- `hid/protocol.rs`（レポート解析）、`state.rs`（状態機械）、`switch.rs`（切り替え先の判断）、`tray/view.rs`（ツールチップとメニューの中身）は純粋関数にして単体テストを書く
 - コード中のコメントは日本語でよい
 
 ## コマンド（実装後に更新）
@@ -28,6 +28,7 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 cargo build
 cargo run                              # 常駐して自動で切り替える（`run` と同じ）
 cargo test
+cargo run                              # トレイに常駐する
 cargo run -- probe                     # HID の生レポートを出力
 cargo run -- probe --battery 5         # 5 秒ごとにバッテリーを問い合わせる
 cargo run -- probe --query 02,04       # 指定したサブコマンドを 1 回ずつ問い合わせる
