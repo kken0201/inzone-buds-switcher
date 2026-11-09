@@ -12,7 +12,7 @@ Sony INZONE Buds（WF-G700N）を USB ドングルで使うための Windows 11 
 ## ダウンロードと起動
 
 1. [Releases](https://github.com/kken0201/inzone-buds-switcher/releases/latest) から `inzone-buds-switcher-vX.Y.Z.zip` をダウンロードします
-2. zip を展開し、`inzone-buds-switcher.exe` を好きなフォルダに置きます（例：`ドキュメント` の中）。一緒に入っている `LICENSE` はライセンス文で、起動には使いません
+2. zip を展開し、`inzone-buds-switcher.exe` を好きなフォルダに置きます
 3. `inzone-buds-switcher.exe` をダブルクリックします
 
 画面右下のシステムトレイ（時計の近く、隠れているときは `^` の中）に丸いアイコンが出たら起動しています。ウィンドウは開きません。
