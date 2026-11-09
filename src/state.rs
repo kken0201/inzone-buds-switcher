@@ -47,6 +47,10 @@ impl Machine {
         Self { debounce, link: Link::Unknown, pending: None }
     }
 
+    pub fn link(&self) -> Link {
+        self.link
+    }
+
     /// 次に `poll` を呼ぶべき時刻。確定待ちがなければ None
     pub fn deadline(&self) -> Option<Instant> {
         self.pending.map(|(_, since)| since + self.debounce)
