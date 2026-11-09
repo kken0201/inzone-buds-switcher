@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -29,8 +30,36 @@ pub enum Event {
     Updated(Version),
     /// exe を置き換えた。起動し直すと新しい版になる
     Ready(Version),
-    /// 置き換えられなかった。同じ版では 1 回だけ送る
+    /// 置き換えられなかった。自動のときは同じ版では 1 回だけ送る
     Failed(Version),
+    /// 手動で確認して、今の版が最新だった。中身はリリースの版
+    UpToDate(Version),
+    /// 手動で確認して、問い合わせに失敗した
+    CheckFailed,
+}
+
+/// 1 回の確認の結果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    UpToDate(Version),
+    CheckFailed,
+    DownloadFailed(Version),
+    Ready(Version),
+    InstallFailed(Version),
+}
+
+/// 何を通知するか。手動のときは結果が分かるようすべて知らせ、自動のときは置き換えの成否だけを知らせる。
+/// 自動で同じ版の置き換えに続けて失敗しても、通知は 1 回にする（`failed` が通知済みの版）
+fn event_for(step: Step, manual: bool, failed: &mut Option<Version>) -> Option<Event> {
+    match step {
+        Step::Ready(v) => Some(Event::Ready(v)),
+        Step::InstallFailed(v) if manual => Some(Event::Failed(v)),
+        Step::InstallFailed(v) => (failed.replace(v) != Some(v)).then_some(Event::Failed(v)),
+        _ if !manual => None,
+        Step::UpToDate(v) => Some(Event::UpToDate(v)),
+        Step::CheckFailed => Some(Event::CheckFailed),
+        Step::DownloadFailed(v) => Some(Event::Failed(v)),
+    }
 }
 
 /// 置き換えに使う 3 つのパス。どれも exe と同じフォルダ
@@ -56,8 +85,10 @@ pub fn check() -> Result<Decision> {
     release::decide(&text, Version::current())
 }
 
-/// `enabled` がオフの間は問い合わせない。`notify` は更新スレッドから呼ばれる
-pub fn spawn(exe: PathBuf, enabled: Arc<AtomicBool>, notify: impl Fn(Event) + Send + 'static) {
+/// `enabled` がオフの間は自動では問い合わせない。返す送信側に送ると、すぐに確認する（手動）。
+/// `notify` は更新スレッドから呼ばれる
+pub fn spawn(exe: PathBuf, enabled: Arc<AtomicBool>, notify: impl Fn(Event) + Send + 'static) -> Sender<()> {
+    let (tx, rx) = mpsc::channel::<()>();
     thread::Builder::new()
         .name("update".into())
         .spawn(move || {
@@ -65,39 +96,44 @@ pub fn spawn(exe: PathBuf, enabled: Arc<AtomicBool>, notify: impl Fn(Event) + Se
             if cleanup(&paths) {
                 notify(Event::Updated(Version::current()));
             }
-            thread::sleep(FIRST_DELAY);
+            let mut wait = FIRST_DELAY;
             let mut last: Option<SystemTime> = None;
             let mut failed: Option<Version> = None;
             loop {
+                let manual = match rx.recv_timeout(wait) {
+                    Ok(()) => true,
+                    Err(RecvTimeoutError::Timeout) => false,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                };
+                wait = POLL;
                 let due = last.is_none_or(|t| t.elapsed().map_or(true, |e| e >= INTERVAL));
-                if due && enabled.load(Ordering::Relaxed) {
+                if manual || (due && enabled.load(Ordering::Relaxed)) {
                     last = Some(SystemTime::now());
-                    match step(&paths) {
+                    let ev = event_for(step(&paths), manual, &mut failed);
+                    // 確認している間に重ねて選ばれた分は捨てる
+                    while rx.try_recv().is_ok() {}
+                    match ev {
                         Some(Event::Ready(v)) => return notify(Event::Ready(v)),
-                        Some(Event::Failed(v)) if failed != Some(v) => {
-                            failed = Some(v);
-                            notify(Event::Failed(v));
-                        }
-                        _ => {}
+                        Some(ev) => notify(ev),
+                        None => {}
                     }
                 }
-                thread::sleep(POLL);
             }
         })
         .expect("スレッドを起動できません");
+    tx
 }
 
-/// 確認とダウンロードの失敗はログだけ。置き換えの失敗は `Failed`
-fn step(paths: &Paths) -> Option<Event> {
+fn step(paths: &Paths) -> Step {
     let target = match check() {
         Ok(Decision::UpToDate(v)) => {
             tracing::info!("更新を確認: 最新は v{v}（今は v{}）", Version::current());
-            return None;
+            return Step::UpToDate(v);
         }
         Ok(Decision::Update(t)) => t,
         Err(e) => {
             tracing::warn!("更新を確認できません: {e:#}");
-            return None;
+            return Step::CheckFailed;
         }
     };
     let v = target.version;
@@ -106,18 +142,18 @@ fn step(paths: &Paths) -> Option<Event> {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!("v{v} をダウンロードできません: {e:#}");
-            return None;
+            return Step::DownloadFailed(v);
         }
     };
     match install(paths, &target, &body) {
         Ok(()) => {
             tracing::info!("v{v} に置き換えました。起動し直します");
-            Some(Event::Ready(v))
+            Step::Ready(v)
         }
         Err(e) => {
             tracing::warn!("v{v} に更新できません: {e:#}");
             let _ = std::fs::remove_file(&paths.new);
-            Some(Event::Failed(v))
+            Step::InstallFailed(v)
         }
     }
 }
@@ -212,6 +248,36 @@ mod tests {
 
     fn read(p: &Path) -> String {
         std::fs::read_to_string(p).unwrap()
+    }
+
+    const V: Version = Version(0, 2, 0);
+
+    #[test]
+    fn automatic_check_reports_only_install_results() {
+        let mut failed = None;
+        for s in [Step::UpToDate(V), Step::CheckFailed, Step::DownloadFailed(V)] {
+            assert_eq!(event_for(s, false, &mut failed), None, "{s:?}");
+        }
+        assert_eq!(event_for(Step::Ready(V), false, &mut failed), Some(Event::Ready(V)));
+    }
+
+    #[test]
+    fn automatic_install_failure_is_reported_once_per_version() {
+        let mut failed = None;
+        assert_eq!(event_for(Step::InstallFailed(V), false, &mut failed), Some(Event::Failed(V)));
+        assert_eq!(event_for(Step::InstallFailed(V), false, &mut failed), None);
+        let next = Version(0, 3, 0);
+        assert_eq!(event_for(Step::InstallFailed(next), false, &mut failed), Some(Event::Failed(next)));
+    }
+
+    #[test]
+    fn manual_check_reports_every_result() {
+        let mut failed = Some(V);
+        assert_eq!(event_for(Step::UpToDate(V), true, &mut failed), Some(Event::UpToDate(V)));
+        assert_eq!(event_for(Step::CheckFailed, true, &mut failed), Some(Event::CheckFailed));
+        assert_eq!(event_for(Step::DownloadFailed(V), true, &mut failed), Some(Event::Failed(V)));
+        assert_eq!(event_for(Step::InstallFailed(V), true, &mut failed), Some(Event::Failed(V)));
+        assert_eq!(event_for(Step::Ready(V), true, &mut failed), Some(Event::Ready(V)));
     }
 
     #[test]

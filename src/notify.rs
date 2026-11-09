@@ -105,6 +105,16 @@ pub fn for_update_failed(version: Version) -> Notice {
     Notice { kind: Kind::Warning, text: format!("⚠ v{version} に更新できませんでした") }
 }
 
+/// 「更新を確認」で最新だった
+pub fn for_up_to_date(version: Version) -> Notice {
+    Notice { kind: Kind::Update, text: format!("最新のバージョンです（v{version}）") }
+}
+
+/// 「更新を確認」で問い合わせに失敗した
+pub fn for_check_failed() -> Notice {
+    Notice { kind: Kind::Warning, text: "⚠ 更新を確認できませんでした".into() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +180,11 @@ mod tests {
             for_update_failed(v),
             Notice { kind: Kind::Warning, text: "⚠ v0.2.0 に更新できませんでした".into() }
         );
+        assert_eq!(
+            for_up_to_date(Version(0, 1, 0)),
+            Notice { kind: Kind::Update, text: "最新のバージョンです（v0.1.0）".into() }
+        );
+        assert_eq!(for_check_failed(), Notice { kind: Kind::Warning, text: "⚠ 更新を確認できませんでした".into() });
     }
 
     #[test]

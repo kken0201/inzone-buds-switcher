@@ -12,7 +12,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Instant;
 
@@ -52,6 +52,8 @@ struct Tray {
     app: App,
     rx: Receiver<HidEvent>,
     updates: Receiver<update::Event>,
+    /// 送ると更新スレッドがすぐに確認する（メニューの「更新を確認」）
+    update_requests: Sender<()>,
     /// 更新スレッドと共有する `auto_update`
     update_enabled: Arc<AtomicBool>,
     /// exe を置き換え済みで、デバウンスの確定待ちが終わったら起動し直す
@@ -95,12 +97,13 @@ pub fn run(app: App, exe: PathBuf) -> Result<Exit> {
     crate::hid::watch::spawn(tx);
     let rx = forward(hid_rx, hwnd);
     let update_enabled = Arc::new(AtomicBool::new(app.config().auto_update));
-    let updates = spawn_update(exe, update_enabled.clone(), hwnd);
+    let (updates, update_requests) = spawn_update(exe, update_enabled.clone(), hwnd);
     let tray = Tray {
         hwnd,
         app,
         rx,
         updates,
+        update_requests,
         update_enabled,
         restart_pending: false,
         icons: Icons::new()?,
@@ -177,15 +180,15 @@ fn forward(hid_rx: Receiver<HidEvent>, hwnd: HWND) -> Receiver<HidEvent> {
     rx
 }
 
-fn spawn_update(exe: PathBuf, enabled: Arc<AtomicBool>, hwnd: HWND) -> Receiver<update::Event> {
+fn spawn_update(exe: PathBuf, enabled: Arc<AtomicBool>, hwnd: HWND) -> (Receiver<update::Event>, Sender<()>) {
     let (tx, rx) = mpsc::channel();
     let raw = hwnd.0 as isize;
-    update::spawn(exe, enabled, move |ev| {
+    let requests = update::spawn(exe, enabled, move |ev| {
         if tx.send(ev).is_ok() {
             let _ = unsafe { PostMessageW(Some(HWND(raw as _)), WM_UPDATE, WPARAM(0), LPARAM(0)) };
         }
     });
-    rx
+    (rx, requests)
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -259,6 +262,12 @@ fn open_menu(hwnd: HWND, x: i32, y: i32) {
             Ok(()) => tracing::info!("Windows 起動時に開始: {on}"),
             Err(e) => tracing::warn!("スタートアップの設定を変えられません: {e:#}"),
         },
+        Some(Command::CheckUpdate) => {
+            tracing::info!("更新の確認を要求");
+            with_tray(|t| {
+                let _ = t.update_requests.send(());
+            });
+        }
         Some(Command::OpenLogs) => open_logs(),
         None => {}
     }
@@ -355,6 +364,8 @@ impl Tray {
                 }
                 update::Event::Ready(_) => self.restart_pending = true,
                 update::Event::Failed(v) => self.balloon(&notify::for_update_failed(v)),
+                update::Event::UpToDate(v) => self.balloon(&notify::for_up_to_date(v)),
+                update::Event::CheckFailed => self.balloon(&notify::for_check_failed()),
             }
         }
         self.restart_if_idle();

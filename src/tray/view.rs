@@ -64,6 +64,8 @@ pub enum Command {
     Set(Setting),
     /// 設定ファイルではなくレジストリの Run キーに書くため、`Setting` とは別。反転後の値を持つ
     Autostart(bool),
+    /// 今すぐ最新のリリースを確認する。`auto_update` がオフでも使える
+    CheckUpdate,
     OpenLogs,
     Quit,
 }
@@ -181,6 +183,7 @@ pub fn menu(
         entry("自動で更新する", config.auto_update, Command::Set(Setting::AutoUpdate(!config.auto_update))),
         Item::Separator,
         label(format!("バージョン {}", env!("CARGO_PKG_VERSION"))),
+        entry("更新を確認", false, Command::CheckUpdate),
         entry("ログフォルダを開く", false, Command::OpenLogs),
         entry("終了", false, Command::Quit),
     ]
@@ -381,5 +384,12 @@ mod tests {
         let m = menu(&Config::default(), &endpoints(), None, Status::Connected, None, false);
         let text = format!("バージョン {}", env!("CARGO_PKG_VERSION"));
         assert_eq!(command(find(&m, &text)), None);
+    }
+
+    #[test]
+    fn check_update_is_selectable_even_when_auto_update_is_off() {
+        let c = Config { auto_update: false, ..Config::default() };
+        let m = menu(&c, &endpoints(), None, Status::Connected, None, false);
+        assert_eq!(command(find(&m, "更新を確認")), Some(Command::CheckUpdate));
     }
 }
