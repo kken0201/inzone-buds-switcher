@@ -5,6 +5,9 @@
 //! 1 回ごとに約 5 秒でタイムアウトする（docs/protocol.md）。hidapi は列挙や初期化の際に
 //! これを問い合わせるため、使い物にならないほど遅くなる。
 
+pub mod protocol;
+pub mod watch;
+
 use anyhow::{Context, Result, bail};
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
     CM_GET_DEVICE_INTERFACE_LIST_PRESENT, CM_Get_Device_Interface_List_SizeW,
