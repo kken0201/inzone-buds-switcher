@@ -1,6 +1,7 @@
 mod audio;
 mod hid;
 mod probe;
+mod state;
 
 use std::io::IsTerminal;
 
