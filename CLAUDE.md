@@ -5,7 +5,7 @@
 Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断されたら、Windows の既定の出力デバイスを自動で切り替え、通知を出す常駐トレイアプリ。トレイにはバッテリー残量も表示する。
 
 - 設計：[docs/design.md](docs/design.md)
-- HID プロトコル：[docs/protocol.md](docs/protocol.md)（未検証の内容を含む。実機で確認したら更新する）
+- HID プロトコル：[docs/protocol.md](docs/protocol.md)（実機で確認した内容。未確認の項目はそう明記している）
 
 ## 方針・制約
 
@@ -27,7 +27,9 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 ```
 cargo build
 cargo test
-cargo run -- probe      # HID の生レポートを出力
+cargo run -- probe                     # HID の生レポートを出力
+cargo run -- probe --battery 5         # 5 秒ごとにバッテリーを問い合わせる
+cargo run -- probe --query 02,04       # 指定したサブコマンドを 1 回ずつ問い合わせる
 cargo build --release   # 配布用 exe
 ```
 
