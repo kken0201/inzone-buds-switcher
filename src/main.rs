@@ -5,10 +5,9 @@ mod hid;
 mod probe;
 mod state;
 mod switch;
+mod tray;
 
 use std::io::IsTerminal;
-use std::sync::mpsc::RecvTimeoutError;
-use std::time::Instant;
 
 use anyhow::{Result, bail};
 use hid::watch::HidEvent;
@@ -38,42 +37,15 @@ fn main() -> Result<()> {
     }
 }
 
-/// HID イベントで状態を追い、接続/切断が確定したら出力を切り替える
+/// トレイに常駐し、接続/切断が確定したら出力を切り替える
 fn run() -> Result<()> {
     let _com = audio::ComGuard::new()?;
     let path = config::path()?;
     tracing::info!("設定: {}", path.display());
-    let mut app = app::App::new(path)?;
-    let (tx, rx) = std::sync::mpsc::channel();
-    hid::watch::spawn(tx);
-    loop {
-        let ev = match app.deadline() {
-            Some(d) => match rx.recv_timeout(d.saturating_duration_since(Instant::now())) {
-                Ok(ev) => Some(ev),
-                Err(RecvTimeoutError::Timeout) => None,
-                Err(RecvTimeoutError::Disconnected) => break,
-            },
-            None => match rx.recv() {
-                Ok(ev) => Some(ev),
-                Err(_) => break,
-            },
-        };
-        let now = Instant::now();
-        let update = match ev {
-            Some(ev) => {
-                log_event(&ev);
-                app.handle(ev, now)
-            }
-            None => app.tick(now),
-        };
-        if let Some(u) = update {
-            log_update(&u);
-        }
-    }
-    Ok(())
+    tray::run(app::App::new(path)?)
 }
 
-fn log_update(u: &app::Update) {
+pub(crate) fn log_update(u: &app::Update) {
     use state::Transition;
     use switch::{Outcome, Skip};
     match u.transition {
@@ -116,7 +88,7 @@ fn watch() -> Result<()> {
     Ok(())
 }
 
-fn log_event(ev: &HidEvent) {
+pub(crate) fn log_event(ev: &HidEvent) {
     match ev {
         HidEvent::DongleFound => tracing::info!("ドングル検出"),
         HidEvent::DongleLost => tracing::info!("ドングル切断"),
@@ -125,9 +97,9 @@ fn log_event(ev: &HidEvent) {
         }
         HidEvent::Battery(b) => tracing::info!(
             "バッテリー L={} R={} ケース={}（{}）",
-            pct(b.left),
-            pct(b.right),
-            pct(b.case),
+            tray::view::pct(b.left),
+            tray::view::pct(b.right),
+            tray::view::pct(b.case),
             if b.earbuds().any() { "イヤホン接続中" } else { "両耳とも未接続" }
         ),
     }
@@ -135,10 +107,6 @@ fn log_event(ev: &HidEvent) {
 
 fn on_off(b: bool) -> &'static str {
     if b { "接続" } else { "切断" }
-}
-
-fn pct(v: Option<u8>) -> String {
-    v.map_or("--".into(), |v| format!("{v}%"))
 }
 
 fn list() -> Result<()> {
