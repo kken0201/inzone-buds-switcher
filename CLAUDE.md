@@ -30,6 +30,9 @@ cargo test
 cargo run -- probe                     # HID の生レポートを出力
 cargo run -- probe --battery 5         # 5 秒ごとにバッテリーを問い合わせる
 cargo run -- probe --query 02,04       # 指定したサブコマンドを 1 回ずつ問い合わせる
+cargo run -- watch                    # HID 監視スレッドのイベントをログに出す
+cargo run -- list                      # 再生デバイスの一覧（既定に * が付く）
+cargo run -- set <id> [--communications]  # 既定の再生デバイスを設定
 cargo run -- watch                     # HID 監視スレッドのイベントをログに出す（RUST_LOG=debug で生レポートも）
 cargo build --release   # 配布用 exe
 ```

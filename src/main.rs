@@ -1,3 +1,4 @@
+mod audio;
 mod hid;
 mod probe;
 
@@ -19,9 +20,11 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("probe") => probe::run(&args[1..]),
         Some("watch") => watch(),
+        Some("list") => list(),
+        Some("set") => set(&args[1..]),
         _ => {
             eprintln!(
-                "usage: inzone-buds-switcher <probe [--battery <秒>] [--query <16進,...>] [--vendor-only] | watch>"
+                "usage: inzone-buds-switcher <probe [--battery <秒>] [--query <16進,...>] [--vendor-only] | watch | list | set <id> [--communications]>"
             );
             bail!("サブコマンドを指定してください");
         }
@@ -57,4 +60,25 @@ fn on_off(b: bool) -> &'static str {
 
 fn pct(v: Option<u8>) -> String {
     v.map_or("--".into(), |v| format!("{v}%"))
+}
+
+fn list() -> Result<()> {
+    let _com = audio::ComGuard::new()?;
+    let audio = audio::Audio::new()?;
+    let default = audio.default_id()?;
+    for ep in audio.list()? {
+        let mark = if default.as_deref() == Some(&ep.id) { "*" } else { " " };
+        let kind = ep.kind.map_or(String::new(), |k| format!("\tdongle:{k:?}"));
+        println!("{mark} {}\t{}{kind}", ep.id, ep.name);
+    }
+    Ok(())
+}
+
+fn set(args: &[String]) -> Result<()> {
+    let communications = args.iter().any(|a| a == "--communications");
+    let Some(id) = args.iter().find(|a| !a.starts_with("--")) else {
+        bail!("set <エンドポイント ID> [--communications]");
+    };
+    let _com = audio::ComGuard::new()?;
+    audio::Audio::new()?.set_default(id, communications)
 }

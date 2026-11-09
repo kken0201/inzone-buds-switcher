@@ -95,7 +95,7 @@ src/
   - 公開 API には既定デバイスを変える手段がない。SoundSwitch や EarTrumpet なども同じ方法を使っており、事実上の定番
   - `eConsole` と `eMultimedia` を設定する。`eCommunications`（通話用）も変えるかは設定で選べるようにする
 - デバイスは**エンドポイント ID**（`{0.0.0.00000000}.{GUID}` 形式の安定した文字列）で保存する。表示名は表示用に保存する
-- ドングルのデバイス（「INZONE Buds - Game」「INZONE Buds - Chat」）は、デバイスのインスタンス ID に含まれる VID/PID（`VID_054C&PID_0EC2`）で見分ける。接続時の切り替え先は Game を想定する
+- ドングルのデバイス（「INZONE Buds - Game」「INZONE Buds - Chat」）は、エンドポイントを提供する USB インターフェイスのインスタンス ID（プロパティ `{b3f8fa53-0004-438e-9003-51a46e139bfc},2`）に含まれる VID/PID（`VID_054C&PID_0EC2`）で見分け、末尾の `MI_03` が Game、`MI_00` が Chat。エンドポイント自身のインスタンス ID には VID/PID が入らない。接続時の切り替え先は Game を想定する
 
 #### 切断時の戻し先
 
@@ -243,5 +243,5 @@ L 80% / R 75% / ケース 60%
 |---|---|
 | `probe` | ドングルの HID レポートを生のまま出力する |
 | `watch` | HID 監視スレッドのイベント（ドングルの検出/切断、接続状態、バッテリー）をログに出す |
-| `list` | 再生デバイスの一覧（エンドポイント ID と表示名）を出力する |
-| `set <id>` | 既定の再生デバイスを設定する |
+| `list` | 再生デバイスの一覧（エンドポイント ID、表示名、ドングルの種別）を出力する。既定のデバイスには `*` が付く |
+| `set <id> [--communications]` | 既定の再生デバイスを設定する（eConsole と eMultimedia。`--communications` で eCommunications も） |
