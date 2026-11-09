@@ -1,4 +1,5 @@
 mod audio;
+mod config;
 mod hid;
 mod probe;
 mod state;
