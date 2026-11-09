@@ -26,6 +26,7 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 
 ```
 cargo build
+cargo run                              # 常駐して自動で切り替える（`run` と同じ）
 cargo test
 cargo run -- probe                     # HID の生レポートを出力
 cargo run -- probe --battery 5         # 5 秒ごとにバッテリーを問い合わせる

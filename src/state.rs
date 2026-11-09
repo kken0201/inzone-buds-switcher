@@ -47,10 +47,6 @@ impl Machine {
         Self { debounce, link: Link::Unknown, pending: None }
     }
 
-    pub fn link(&self) -> Link {
-        self.link
-    }
-
     /// 次に `poll` を呼ぶべき時刻。確定待ちがなければ None
     pub fn deadline(&self) -> Option<Instant> {
         self.pending.map(|(_, since)| since + self.debounce)
@@ -117,7 +113,7 @@ mod tests {
     #[test]
     fn starts_unknown_without_deadline() {
         let m = Machine::new(DEBOUNCE);
-        assert_eq!(m.link(), Link::Unknown);
+        assert_eq!(m.link, Link::Unknown);
         assert_eq!(m.deadline(), None);
     }
 
@@ -126,18 +122,18 @@ mod tests {
         let t0 = Instant::now();
         let mut m = Machine::new(DEBOUNCE);
         assert_eq!(m.observe(buds(true, true), t0), None);
-        assert_eq!(m.link(), Link::Unknown);
+        assert_eq!(m.link, Link::Unknown);
         assert_eq!(m.deadline(), Some(t0 + DEBOUNCE));
         assert_eq!(m.poll(t0 + ms(1499)), None);
         assert_eq!(m.poll(t0 + DEBOUNCE), Some(Transition::Established { connected: true }));
-        assert_eq!(m.link(), Link::Connected);
+        assert_eq!(m.link, Link::Connected);
         assert_eq!(m.deadline(), None);
     }
 
     #[test]
     fn unknown_to_disconnected_is_established() {
         let (m, _) = settled(false);
-        assert_eq!(m.link(), Link::Disconnected);
+        assert_eq!(m.link, Link::Disconnected);
     }
 
     #[test]
@@ -145,7 +141,7 @@ mod tests {
         let (mut m, t) = settled(false);
         assert_eq!(m.observe(buds(true, false), t), None);
         assert_eq!(m.poll(t + DEBOUNCE), Some(Transition::Changed { connected: true }));
-        assert_eq!(m.link(), Link::Connected);
+        assert_eq!(m.link, Link::Connected);
     }
 
     #[test]
@@ -153,7 +149,7 @@ mod tests {
         let (mut m, t) = settled(true);
         assert_eq!(m.observe(buds(false, false), t), None);
         assert_eq!(m.poll(t + DEBOUNCE), Some(Transition::Changed { connected: false }));
-        assert_eq!(m.link(), Link::Disconnected);
+        assert_eq!(m.link, Link::Disconnected);
     }
 
     #[test]
@@ -170,7 +166,7 @@ mod tests {
         assert_eq!(m.observe(buds(true, false), t + ms(1000)), None);
         assert_eq!(m.deadline(), None);
         assert_eq!(m.poll(t + ms(5000)), None);
-        assert_eq!(m.link(), Link::Connected);
+        assert_eq!(m.link, Link::Connected);
     }
 
     #[test]
@@ -197,7 +193,7 @@ mod tests {
         let (mut m, t) = settled(true);
         m.observe(buds(false, false), t);
         assert_eq!(m.observe(Obs::DongleLost, t + ms(10)), Some(Transition::Lost));
-        assert_eq!(m.link(), Link::Unknown);
+        assert_eq!(m.link, Link::Unknown);
         assert_eq!(m.deadline(), None);
         assert_eq!(m.poll(t + ms(5000)), None);
     }
