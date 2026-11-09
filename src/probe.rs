@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
+use crate::hid::protocol::{Origin, Report, build_query, hex, parse, trim_zeros};
 use crate::hid::{self, Device, PID, VID};
 
 const HUB_USAGE_PAGE: u16 = 0xFF04;
@@ -63,50 +64,24 @@ fn now() -> String {
     chrono::Local::now().format("%H:%M:%S%.3f").to_string()
 }
 
-fn hex(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
-}
-
-/// 末尾の 0 を省いて表示を短くする（長さは別に表示する）
-fn trim_zeros(data: &[u8]) -> &[u8] {
-    let end = data.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-    &data[..end]
-}
-
 /// 既知のレポートに簡単な注釈を付ける（docs/protocol.md の解釈）
 fn annotate(d: &[u8]) -> String {
-    let at = |i: usize| d.get(i).copied();
-    let pct = |v: Option<u8>| match v {
-        Some(v) if v <= 100 => format!("{v}%"),
-        Some(v) => format!("0x{v:02X}"),
-        None => "--".into(),
+    let Some(p) = parse(d) else { return String::new() };
+    let seq = match p.origin {
+        Origin::Spontaneous => "-".to_string(),
+        Origin::Response { seq } => seq.to_string(),
     };
-    match (at(8), at(9)) {
-        (Some(0x12), Some(0x01)) => {
-            format!("  # 状態? L={} R={}", at(13).unwrap_or(0), at(14).unwrap_or(0))
-        }
-        (Some(0x14), Some(0x04)) => format!(
-            "  # バッテリー? seq={} L={} R={} C={}",
-            at(11).unwrap_or(0),
-            pct(at(14)),
-            pct(at(16)),
-            pct(at(18))
+    let pct = |v: Option<u8>| v.map_or("--".to_string(), |v| format!("{v}%"));
+    match p.report {
+        Report::Status(e) => format!("  # 状態? L={} R={}", e.left as u8, e.right as u8),
+        Report::Battery(b) => format!(
+            "  # バッテリー? seq={seq} L={} R={} C={}",
+            pct(b.left),
+            pct(b.right),
+            pct(b.case)
         ),
         _ => String::new(),
     }
-}
-
-/// 問い合わせの出力レポートを作る。`sub` = 0x04 がバッテリー（docs/protocol.md 2b）
-fn build_request(len: usize, sub: u8, seq: u8) -> Vec<u8> {
-    let mut r = vec![0u8; len.max(14)];
-    r[..8].copy_from_slice(&[0x02, 0x0C, 0x01, 0x00, 0xFC, 0x08, 0x96, 0xC3]);
-    r[8] = 0x41; // コマンド
-    r[9] = sub;
-    r[10] = 0x01;
-    r[11] = seq;
-    // チェックサム：[6] から直前までの和
-    r[13] = r[6..13].iter().fold(0u8, |a, &b| a.wrapping_add(b));
-    r
 }
 
 pub fn run(args: &[String]) -> Result<()> {
@@ -152,7 +127,7 @@ pub fn run(args: &[String]) -> Result<()> {
         Some((dev, len)) => {
             let mut seq: u8 = 1;
             let send = |sub: u8, seq: u8| {
-                let req = build_request(len, sub, seq);
+                let req = build_query(len, sub, seq);
                 match dev.write(&req) {
                     Ok(n) => out!(
                         "{} TX  [FF04:0001] len={n} {}  # 問い合わせ sub=0x{sub:02X} seq={seq}",
