@@ -2,12 +2,16 @@
 //!
 //! 状態はメインスレッドの `TRAY` に置き、ウィンドウプロシージャから触る。
 //! HID 監視スレッドのイベントは転送スレッドがチャネルに入れ、`WM_HID` でループを起こす。
+//! 自動更新スレッドの結果も同じようにチャネルに入れ、`WM_UPDATE` で起こす。
 
 mod icon;
 mod shape;
 pub mod view;
 
 use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Instant;
@@ -31,11 +35,15 @@ use windows::core::{PCWSTR, w};
 use crate::app::{App, Update};
 use crate::notify::{self, Kind, Notice};
 use crate::hid::watch::HidEvent;
+use crate::update;
 use icon::Icons;
 use view::{Command, Item, Setting, Status};
 
 const WM_HID: u32 = WM_APP;
 const WM_TRAY: u32 = WM_APP + 1;
+const WM_UPDATE: u32 = WM_APP + 2;
+/// 起動し直すためにウィンドウを閉じる。`TRAY` を借りていない状態で `DestroyWindow` するよう、投げて処理する
+const WM_RESTART: u32 = WM_APP + 3;
 const DEBOUNCE_TIMER: usize = 1;
 const ICON_ID: u32 = 1;
 
@@ -43,6 +51,11 @@ struct Tray {
     hwnd: HWND,
     app: App,
     rx: Receiver<HidEvent>,
+    updates: Receiver<update::Event>,
+    /// 更新スレッドと共有する `auto_update`
+    update_enabled: Arc<AtomicBool>,
+    /// exe を置き換え済みで、デバウンスの確定待ちが終わったら起動し直す
+    restart_pending: bool,
     icons: Icons,
     /// 最後にシェルへ渡した表示。None はアイコンがまだ（または Explorer の再起動で）ない
     shown: Option<(Status, String)>,
@@ -51,6 +64,15 @@ struct Tray {
 thread_local! {
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
     static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
+    static RESTART: Cell<bool> = const { Cell::new(false) };
+}
+
+/// メッセージループが終わった理由
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exit {
+    Quit,
+    /// 自動更新で exe を置き換えた。呼び出し側がミューテックスを手放してから新しい exe を起動する
+    Restart,
 }
 
 /// `TRAY` を借りられないとき（再入中）は false
@@ -66,13 +88,24 @@ fn with_tray(f: impl FnOnce(&mut Tray)) -> bool {
     })
 }
 
-/// トレイを表示し、終了が選ばれるまでメッセージループを回す
-pub fn run(app: App) -> Result<()> {
+/// トレイを表示し、終了が選ばれるか起動し直すまでメッセージループを回す
+pub fn run(app: App, exe: PathBuf) -> Result<Exit> {
     let hwnd = create_window()?;
     let (tx, hid_rx) = mpsc::channel();
     crate::hid::watch::spawn(tx);
     let rx = forward(hid_rx, hwnd);
-    let tray = Tray { hwnd, app, rx, icons: Icons::new()?, shown: None };
+    let update_enabled = Arc::new(AtomicBool::new(app.config().auto_update));
+    let updates = spawn_update(exe, update_enabled.clone(), hwnd);
+    let tray = Tray {
+        hwnd,
+        app,
+        rx,
+        updates,
+        update_enabled,
+        restart_pending: false,
+        icons: Icons::new()?,
+        shown: None,
+    };
     TRAY.with(|t| *t.borrow_mut() = Some(tray));
     with_tray(Tray::show);
 
@@ -85,7 +118,7 @@ pub fn run(app: App) -> Result<()> {
     }
     // COM を使う App を、呼び出し側の ComGuard より先に捨てる
     TRAY.with(|t| t.borrow_mut().take());
-    Ok(())
+    Ok(if RESTART.get() { Exit::Restart } else { Exit::Quit })
 }
 
 /// TaskbarCreated はブロードキャストで届くので、メッセージ専用ウィンドウ（HWND_MESSAGE）は使えない。
@@ -144,10 +177,27 @@ fn forward(hid_rx: Receiver<HidEvent>, hwnd: HWND) -> Receiver<HidEvent> {
     rx
 }
 
+fn spawn_update(exe: PathBuf, enabled: Arc<AtomicBool>, hwnd: HWND) -> Receiver<update::Event> {
+    let (tx, rx) = mpsc::channel();
+    let raw = hwnd.0 as isize;
+    update::spawn(exe, enabled, move |ev| {
+        if tx.send(ev).is_ok() {
+            let _ = unsafe { PostMessageW(Some(HWND(raw as _)), WM_UPDATE, WPARAM(0), LPARAM(0)) };
+        }
+    });
+    rx
+}
+
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let handled = match msg {
         WM_HID => with_tray(Tray::drain),
         WM_TIMER if wparam.0 == DEBOUNCE_TIMER => with_tray(Tray::tick),
+        WM_UPDATE => with_tray(Tray::drain_updates),
+        WM_RESTART => {
+            RESTART.set(true);
+            let _ = unsafe { DestroyWindow(hwnd) };
+            true
+        }
         WM_TRAY => {
             // NOTIFYICON_VERSION_4 では lParam の下位がイベント、wParam がアイコンの位置
             let event = (lparam.0 as u32) & 0xFFFF;
@@ -285,6 +335,7 @@ impl Tray {
         }
         self.rearm();
         self.show();
+        self.restart_if_idle();
     }
 
     fn tick(&mut self) {
@@ -292,6 +343,29 @@ impl Tray {
         self.report(update);
         self.rearm();
         self.show();
+        self.restart_if_idle();
+    }
+
+    fn drain_updates(&mut self) {
+        while let Ok(ev) = self.updates.try_recv() {
+            match ev {
+                update::Event::Updated(v) => {
+                    tracing::info!("v{v} に更新しました");
+                    self.balloon(&notify::for_updated(v));
+                }
+                update::Event::Ready(_) => self.restart_pending = true,
+                update::Event::Failed(v) => self.balloon(&notify::for_update_failed(v)),
+            }
+        }
+        self.restart_if_idle();
+    }
+
+    /// 接続/切断の確定待ちの間に止めると、その切り替えが起きなくなるので待つ（docs/design.md 4.8）
+    fn restart_if_idle(&mut self) {
+        if self.restart_pending && self.app.deadline().is_none() {
+            self.restart_pending = false;
+            let _ = unsafe { PostMessageW(Some(self.hwnd), WM_RESTART, WPARAM(0), LPARAM(0)) };
+        }
     }
 
     /// 更新をログに残し、通知する
@@ -360,6 +434,7 @@ impl Tray {
     fn set(&mut self, setting: Setting) {
         tracing::info!("設定を変更: {setting:?}");
         self.app.update_config(|c| setting.apply(c));
+        self.update_enabled.store(self.app.config().auto_update, Ordering::Relaxed);
     }
 
     fn nid(&self) -> NOTIFYICONDATAW {

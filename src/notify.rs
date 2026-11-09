@@ -3,12 +3,15 @@
 
 use crate::config::Config;
 use crate::switch::{Outcome, Skip};
+use crate::update::release::Version;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Switch,
     Warning,
     Battery,
+    /// 自動更新で版が変わった。オフにできない
+    Update,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +76,7 @@ pub fn for_outcome(outcome: &Outcome, config: &Config) -> Option<Notice> {
         Kind::Switch => config.notify_switch,
         Kind::Warning => true,
         Kind::Battery => config.notify_battery,
+        Kind::Update => true,
     };
     enabled.then_some(Notice { kind, text })
 }
@@ -89,6 +93,16 @@ pub fn for_low_battery(alert: LowAlert, config: &Config) -> Option<Notice> {
         kind: Kind::Battery,
         text: format!("🔋 イヤホンの残量が少なくなっています（{}）", levels.join(" / ")),
     })
+}
+
+/// 起動し直したあと、前の版を片付けたときに出す
+pub fn for_updated(version: Version) -> Notice {
+    Notice { kind: Kind::Update, text: format!("⬆ v{version} に更新しました") }
+}
+
+/// exe を置き換えられなかった。警告なので常に出す
+pub fn for_update_failed(version: Version) -> Notice {
+    Notice { kind: Kind::Warning, text: format!("⚠ v{version} に更新できませんでした") }
 }
 
 #[cfg(test)]
@@ -146,6 +160,16 @@ mod tests {
         for s in [Skip::Disabled, Skip::UserChanged] {
             assert_eq!(notice(Outcome::Skipped(s), &Config::default()), None);
         }
+    }
+
+    #[test]
+    fn update_notices_name_the_version() {
+        let v = Version(0, 2, 0);
+        assert_eq!(for_updated(v), Notice { kind: Kind::Update, text: "⬆ v0.2.0 に更新しました".into() });
+        assert_eq!(
+            for_update_failed(v),
+            Notice { kind: Kind::Warning, text: "⚠ v0.2.0 に更新できませんでした".into() }
+        );
     }
 
     #[test]

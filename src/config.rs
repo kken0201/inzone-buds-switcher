@@ -24,6 +24,8 @@ pub struct Config {
     pub notify_battery: bool,
     pub debounce_ms: u64,
     pub low_battery_threshold: u8,
+    /// 新しい版を GitHub Releases から取ってきて置き換える（docs/design.md 4.8）
+    pub auto_update: bool,
 }
 
 impl Default for Config {
@@ -37,6 +39,7 @@ impl Default for Config {
             notify_battery: true,
             debounce_ms: 1500,
             low_battery_threshold: 5,
+            auto_update: true,
         }
     }
 }
@@ -122,7 +125,8 @@ mod tests {
               "notify_switch": false,
               "notify_battery": false,
               "debounce_ms": 2000,
-              "low_battery_threshold": 10
+              "low_battery_threshold": 10,
+              "auto_update": false
             }"#,
         )
         .unwrap();
@@ -137,6 +141,7 @@ mod tests {
                 notify_battery: false,
                 debounce_ms: 2000,
                 low_battery_threshold: 10,
+                auto_update: false,
             }
         );
     }
