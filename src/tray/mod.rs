@@ -15,14 +15,14 @@ use anyhow::{Context, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIIF_INFO, NIIF_WARNING, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT, ShellExecuteW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIIF_INFO, NIIF_WARNING, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT,
     NINF_KEY, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GetMessageW, HMENU, KillTimer, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
     MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SW_SHOWNORMAL, SetForegroundWindow, SetTimer, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+    ASFW_ANY, AllowSetForegroundWindow, SetForegroundWindow, SetTimer, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
     WINDOW_EX_STYLE, WM_APP, WM_CONTEXTMENU, WM_DESTROY, WM_NULL, WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
 };
 use windows::core::{PCWSTR, w};
@@ -222,11 +222,10 @@ fn open_logs() {
         Ok(d) => d,
         Err(e) => return tracing::warn!("ログフォルダを開けません: {e:#}"),
     };
-    let path = wide(&dir.to_string_lossy());
-    let r = unsafe { ShellExecuteW(None, w!("open"), PCWSTR(path.as_ptr()), None, None, SW_SHOWNORMAL) };
-    // 32 以下がエラー
-    if r.0 as isize <= 32 {
-        tracing::warn!("ログフォルダを開けません: {}", dir.display());
+    // ウィンドウを作るのは常駐中の Explorer なので、前面に出る許可を渡さないと裏に開く
+    let _ = unsafe { AllowSetForegroundWindow(ASFW_ANY) };
+    if let Err(e) = std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+        tracing::warn!("ログフォルダを開けません: {}: {e}", dir.display());
     }
 }
 
