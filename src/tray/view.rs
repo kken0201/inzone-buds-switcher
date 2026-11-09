@@ -60,6 +60,9 @@ impl Setting {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Set(Setting),
+    /// 設定ファイルではなくレジストリの Run キーに書くため、`Setting` とは別。反転後の値を持つ
+    Autostart(bool),
+    OpenLogs,
     Quit,
 }
 
@@ -133,6 +136,7 @@ pub fn menu(
     current: Option<&str>,
     status: Status,
     battery: Option<Battery>,
+    autostart: bool,
 ) -> Vec<Item> {
     let b = battery.unwrap_or(NO_BATTERY);
     let all: Vec<&Endpoint> = endpoints.iter().collect();
@@ -171,7 +175,9 @@ pub fn menu(
             config.notify_battery,
             Command::Set(Setting::NotifyBattery(!config.notify_battery)),
         ),
+        entry("Windows 起動時に開始", autostart, Command::Autostart(!autostart)),
         Item::Separator,
+        entry("ログフォルダを開く", false, Command::OpenLogs),
         entry("終了", false, Command::Quit),
     ]
 }
@@ -243,7 +249,7 @@ mod tests {
     #[test]
     fn header_lines_show_status_and_battery() {
         let b = Battery { left: Some(80), right: Some(75), case: None };
-        let m = menu(&Config::default(), &endpoints(), None, Status::Connected, Some(b));
+        let m = menu(&Config::default(), &endpoints(), None, Status::Connected, Some(b), false);
         assert_eq!(
             summary(&m[..2]),
             [
@@ -256,7 +262,7 @@ mod tests {
     #[test]
     fn toggles_carry_the_flipped_value() {
         let c = Config { auto_switch: true, notify_switch: false, ..Config::default() };
-        let m = menu(&c, &endpoints(), None, Status::Connected, None);
+        let m = menu(&c, &endpoints(), None, Status::Connected, None, false);
         assert_eq!(command(find(&m, "自動切り替え")), Some(Command::Set(Setting::AutoSwitch(false))));
         assert_eq!(command(find(&m, "切り替えを通知")), Some(Command::Set(Setting::NotifySwitch(true))));
         assert_eq!(
@@ -267,8 +273,18 @@ mod tests {
     }
 
     #[test]
+    fn autostart_toggle_carries_flipped_value_and_checkmark() {
+        let off = menu(&Config::default(), &endpoints(), None, Status::Connected, None, false);
+        assert_eq!(command(find(&off, "Windows 起動時に開始")), Some(Command::Autostart(true)));
+        let on = menu(&Config::default(), &endpoints(), None, Status::Connected, None, true);
+        assert_eq!(command(find(&on, "Windows 起動時に開始")), Some(Command::Autostart(false)));
+        assert!(matches!(find(&on, "Windows 起動時に開始"), Item::Entry { checked: true, .. }));
+        assert_eq!(command(find(&on, "ログフォルダを開く")), Some(Command::OpenLogs));
+    }
+
+    #[test]
     fn connected_list_has_all_devices_and_marks_game_when_unset() {
-        let m = menu(&Config::default(), &endpoints(), None, Status::Connected, None);
+        let m = menu(&Config::default(), &endpoints(), None, Status::Connected, None, false);
         assert_eq!(
             summary(submenu(&m, "接続時の出力")),
             [
@@ -282,7 +298,7 @@ mod tests {
     #[test]
     fn connected_list_marks_configured_device() {
         let c = Config { connected_device: Some(dev("chat")), ..Config::default() };
-        let m = menu(&c, &endpoints(), None, Status::Connected, None);
+        let m = menu(&c, &endpoints(), None, Status::Connected, None, false);
         let checked: Vec<_> = summary(submenu(&m, "接続時の出力")).into_iter().filter(|s| s.1).collect();
         assert_eq!(checked, [("chat name".into(), true, true)]);
     }
@@ -290,7 +306,7 @@ mod tests {
     #[test]
     fn disconnected_list_excludes_dongle_devices() {
         let c = Config { disconnected_device: Some(dev("speaker")), ..Config::default() };
-        let m = menu(&c, &endpoints(), None, Status::Connected, None);
+        let m = menu(&c, &endpoints(), None, Status::Connected, None, false);
         let list = submenu(&m, "切断時の出力");
         assert_eq!(summary(list), [("speaker name".into(), true, true)]);
         assert_eq!(command(&list[0]), Some(Command::Set(Setting::DisconnectedDevice(dev("speaker")))));
@@ -299,7 +315,7 @@ mod tests {
     #[test]
     fn missing_configured_device_is_shown_but_not_selectable() {
         let c = Config { disconnected_device: Some(dev("usb")), ..Config::default() };
-        let m = menu(&c, &endpoints(), None, Status::Connected, None);
+        let m = menu(&c, &endpoints(), None, Status::Connected, None, false);
         assert_eq!(
             summary(submenu(&m, "切断時の出力")),
             [("speaker name".into(), false, true), ("usb name（見つかりません）".into(), true, false)]
@@ -308,7 +324,7 @@ mod tests {
 
     #[test]
     fn empty_device_list_has_placeholder() {
-        let m = menu(&Config::default(), &[], None, Status::NoDongle, None);
+        let m = menu(&Config::default(), &[], None, Status::NoDongle, None, false);
         assert_eq!(
             summary(submenu(&m, "切断時の出力")),
             [("（再生デバイスがありません）".into(), false, false)]
@@ -317,7 +333,7 @@ mod tests {
 
     #[test]
     fn use_current_sets_non_dongle_default() {
-        let m = menu(&Config::default(), &endpoints(), Some("speaker"), Status::Connected, None);
+        let m = menu(&Config::default(), &endpoints(), Some("speaker"), Status::Connected, None, false);
         assert_eq!(
             command(find(&m, "今の出力を切断時の出力にする")),
             Some(Command::Set(Setting::DisconnectedDevice(dev("speaker"))))
@@ -327,7 +343,7 @@ mod tests {
     #[test]
     fn use_current_is_disabled_for_dongle_or_unknown_default() {
         for current in [Some("game"), Some("chat"), Some("inactive"), None] {
-            let m = menu(&Config::default(), &endpoints(), current, Status::Connected, None);
+            let m = menu(&Config::default(), &endpoints(), current, Status::Connected, None, false);
             assert_eq!(command(find(&m, "今の出力を切断時の出力にする")), None, "{current:?}");
         }
     }

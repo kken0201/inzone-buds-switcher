@@ -1,27 +1,23 @@
 mod app;
 mod audio;
+mod autostart;
 mod config;
 mod hid;
+mod instance;
+mod logging;
+mod notify;
 mod probe;
 mod state;
 mod switch;
 mod tray;
 
-use std::io::IsTerminal;
-
 use anyhow::{Result, bail};
 use hid::watch::HidEvent;
-use tracing_subscriber::{EnvFilter, fmt::time::ChronoLocal};
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with_timer(ChronoLocal::rfc_3339())
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::stderr().is_terminal())
-        .init();
-
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let tray = matches!(args.first().map(String::as_str), None | Some("run"));
+    logging::init(tray);
     match args.first().map(String::as_str) {
         Some("probe") => probe::run(&args[1..]),
         Some("watch") => watch(),
@@ -39,6 +35,11 @@ fn main() -> Result<()> {
 
 /// トレイに常駐し、接続/切断が確定したら出力を切り替える
 fn run() -> Result<()> {
+    // 二重起動は静かに終わる。スタートアップとの重複などで日常的に起こりうるため、ダイアログは出さない
+    let Some(_instance) = instance::acquire()? else {
+        tracing::info!("すでに起動しているため終了します");
+        return Ok(());
+    };
     let _com = audio::ComGuard::new()?;
     let path = config::path()?;
     tracing::info!("設定: {}", path.display());

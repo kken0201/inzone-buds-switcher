@@ -10,6 +10,7 @@ use crate::audio::{Audio, Endpoint};
 use crate::config::{self, Config, DeviceRef};
 use crate::hid::protocol::Battery;
 use crate::hid::watch::HidEvent;
+use crate::notify::{self, LowAlert, LowFlags};
 use crate::state::{Link, Machine, Obs, Transition};
 use crate::switch::{self, Outcome};
 
@@ -21,6 +22,9 @@ pub struct App {
     dongle: bool,
     /// 最後に届いたバッテリー。切断された側は None にする
     battery: Option<Battery>,
+    /// バッテリー低下を通知済みの側。`battery` と違い、切断されても消さない（docs/design.md 4.5）
+    low: LowFlags,
+    low_alert: Option<LowAlert>,
 }
 
 #[derive(Debug)]
@@ -34,7 +38,16 @@ impl App {
     pub fn new(config_path: PathBuf) -> Result<Self> {
         let config = config::load(&config_path);
         let machine = Machine::new(Duration::from_millis(config.debounce_ms));
-        Ok(Self { audio: Audio::new()?, config, config_path, machine, dongle: false, battery: None })
+        Ok(Self {
+            audio: Audio::new()?,
+            config,
+            config_path,
+            machine,
+            dongle: false,
+            battery: None,
+            low: LowFlags::default(),
+            low_alert: None,
+        })
     }
 
     pub fn config(&self) -> &Config {
@@ -51,6 +64,11 @@ impl App {
 
     pub fn battery(&self) -> Option<Battery> {
         self.battery
+    }
+
+    /// 直近のイベントで新たにしきい値以下になった側。取り出すと空になる
+    pub fn take_low_battery(&mut self) -> Option<LowAlert> {
+        self.low_alert.take()
     }
 
     /// 再生デバイスの一覧と、既定デバイスの ID
@@ -92,6 +110,10 @@ impl App {
             }
             HidEvent::Battery(b) => {
                 self.battery = Some(b);
+                let (low, alert) =
+                    notify::battery_alert(self.low, b.left, b.right, self.config.low_battery_threshold);
+                self.low = low;
+                self.low_alert = alert.or(self.low_alert);
                 Obs::Earbuds(b.earbuds())
             }
         };

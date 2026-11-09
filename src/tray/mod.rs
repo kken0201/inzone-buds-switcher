@@ -15,19 +15,20 @@ use anyhow::{Context, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIIF_INFO, NIIF_WARNING, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT, ShellExecuteW,
     NINF_KEY, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GetMessageW, HMENU, KillTimer, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
     MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SetForegroundWindow, SetTimer, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+    SW_SHOWNORMAL, SetForegroundWindow, SetTimer, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
     WINDOW_EX_STYLE, WM_APP, WM_CONTEXTMENU, WM_DESTROY, WM_NULL, WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
 };
 use windows::core::{PCWSTR, w};
 
-use crate::app::App;
+use crate::app::{App, Update};
+use crate::notify::{self, Kind, Notice};
 use crate::hid::watch::HidEvent;
 use icon::Icons;
 use view::{Command, Item, Setting, Status};
@@ -203,7 +204,29 @@ fn open_menu(hwnd: HWND, x: i32, y: i32) {
         Some(Command::Set(s)) => {
             with_tray(|t| t.set(s));
         }
+        Some(Command::Autostart(on)) => match crate::autostart::set(on) {
+            Ok(()) => tracing::info!("Windows 起動時に開始: {on}"),
+            Err(e) => tracing::warn!("スタートアップの設定を変えられません: {e:#}"),
+        },
+        Some(Command::OpenLogs) => open_logs(),
         None => {}
+    }
+}
+
+fn open_logs() {
+    let dir = match crate::logging::dir().and_then(|d| {
+        // まだ 1 度もログを書いていなくても開けるようにする
+        std::fs::create_dir_all(&d)?;
+        Ok(d)
+    }) {
+        Ok(d) => d,
+        Err(e) => return tracing::warn!("ログフォルダを開けません: {e:#}"),
+    };
+    let path = wide(&dir.to_string_lossy());
+    let r = unsafe { ShellExecuteW(None, w!("open"), PCWSTR(path.as_ptr()), None, None, SW_SHOWNORMAL) };
+    // 32 以下がエラー
+    if r.0 as isize <= 32 {
+        tracing::warn!("ログフォルダを開けません: {}", dir.display());
     }
 }
 
@@ -241,6 +264,14 @@ unsafe fn render(items: &[Item], commands: &mut Vec<Command>) -> Result<HMENU> {
     }
 }
 
+/// 末尾の NUL を残して切り詰めてコピーする
+fn copy_wide(dst: &mut [u16], src: &str) {
+    let max = dst.len() - 1;
+    for (d, s) in dst.iter_mut().zip(src.encode_utf16().take(max)) {
+        *d = s;
+    }
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -249,20 +280,50 @@ impl Tray {
     fn drain(&mut self) {
         while let Ok(ev) = self.rx.try_recv() {
             crate::log_event(&ev);
-            if let Some(u) = self.app.handle(ev, Instant::now()) {
-                crate::log_update(&u);
-            }
+            let update = self.app.handle(ev, Instant::now());
+            self.report(update);
         }
         self.rearm();
         self.show();
     }
 
     fn tick(&mut self) {
-        if let Some(u) = self.app.tick(Instant::now()) {
-            crate::log_update(&u);
-        }
+        let update = self.app.tick(Instant::now());
+        self.report(update);
         self.rearm();
         self.show();
+    }
+
+    /// 更新をログに残し、通知する
+    fn report(&mut self, update: Option<Update>) {
+        if let Some(u) = update {
+            crate::log_update(&u);
+            let config = self.app.config().clone();
+            for n in u.outcomes.iter().filter_map(|o| notify::for_outcome(o, &config)) {
+                self.balloon(&n);
+            }
+        }
+        if let Some(a) = self.app.take_low_battery() {
+            tracing::info!("バッテリー低下: L={} R={}", view::pct(a.left), view::pct(a.right));
+            if let Some(n) = notify::for_low_battery(a, self.app.config()) {
+                self.balloon(&n);
+            }
+        }
+    }
+
+    /// 既存のトレイアイコンにバルーンを出す。アイコンがないときは出せない
+    fn balloon(&mut self, notice: &Notice) {
+        if self.shown.is_none() {
+            return;
+        }
+        let mut nid = self.nid();
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = if notice.kind == Kind::Warning { NIIF_WARNING } else { NIIF_INFO };
+        copy_wide(&mut nid.szInfoTitle, "INZONE Buds");
+        copy_wide(&mut nid.szInfo, &notice.text);
+        if !unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) }.as_bool() {
+            tracing::warn!("通知を表示できません: {}", notice.text);
+        }
     }
 
     /// デバウンスの確定時刻にタイマーを合わせる。早く来ても `App::tick` が何もせず、次を合わせ直す
@@ -292,6 +353,7 @@ impl Tray {
             current.as_deref(),
             Status::of(self.app.dongle(), self.app.link()),
             self.app.battery(),
+            crate::autostart::is_enabled(),
         )
     }
 
@@ -320,10 +382,7 @@ impl Tray {
         nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_SHOWTIP;
         nid.uCallbackMessage = WM_TRAY;
         nid.hIcon = self.icons.get(status);
-        let max = nid.szTip.len() - 1;
-        for (dst, src) in nid.szTip.iter_mut().zip(tip.encode_utf16().take(max)) {
-            *dst = src;
-        }
+        copy_wide(&mut nid.szTip, &tip);
         let ok = unsafe {
             if self.shown.is_none() {
                 nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
