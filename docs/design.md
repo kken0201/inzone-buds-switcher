@@ -286,9 +286,10 @@ L 80% / R 75% / ケース 60%
 - `.cargo/config.toml` に `-C target-feature=+crt-static` を設定し、VC++ ランタイムなしで動かす
   - リリースビルドの exe が読み込む DLL は OS 付属のものだけ（`vcruntime140.dll` や `api-ms-win-crt-*` を含まない）ことを、PE のインポート表で確認した。VC++ ランタイムを入れていない PC での起動は未確認
 - exe のアイコンは `build.rs` でトレイの「接続中」と同じ緑の円を描き（16〜256 px の 6 サイズ）、`.ico` を `OUT_DIR` に書いて埋め込む。画像ファイルをリポジトリに置かず、トレイアイコンと見た目がずれないようにするため
-- GitHub Actions（`windows-latest`、`.github/workflows/release.yml`）で、`v*` のタグを push したらテストとリリースビルドを行い、exe 1 つを入れた `inzone-buds-switcher-<タグ>.zip` を GitHub Releases に置く
+- GitHub Actions（`windows-latest`、`.github/workflows/release.yml`）で、`v*` のタグを push したらテストとリリースビルドを行い、exe と LICENSE を入れた `inzone-buds-switcher-<タグ>.zip` を GitHub Releases に置く
   - タグが `Cargo.toml` の `version` と一致しない（`v0.1.0` と `0.1.0` のように）ときは失敗させる。exe の版とリリース名がずれるのを防ぐため
   - リリースノートは GitHub の自動生成を使う
+- ライセンスは MIT（`LICENSE`）。zip に LICENSE を同梱するのは、MIT が複製物に著作権表示と許諾文を含めることを求めるため
 - exe はコード署名しない。そのため初回起動時に SmartScreen の警告が出るので、README で回避手順（「詳細情報」→「実行」）を案内する
 
 ### リリースの手順

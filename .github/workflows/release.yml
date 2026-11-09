@@ -30,7 +30,7 @@ jobs:
       - name: Package
         run: |
           $zip = "inzone-buds-switcher-${{ github.ref_name }}.zip"
-          Compress-Archive -Path target/release/inzone-buds-switcher.exe -DestinationPath $zip
+          Compress-Archive -Path target/release/inzone-buds-switcher.exe, LICENSE -DestinationPath $zip
           "ZIP=$zip" >> $env:GITHUB_ENV
 
       - name: Create release
