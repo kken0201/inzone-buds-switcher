@@ -43,6 +43,7 @@ pub enum Setting {
     DisconnectedDevice(DeviceRef),
     NotifySwitch(bool),
     NotifyBattery(bool),
+    AutoUpdate(bool),
 }
 
 impl Setting {
@@ -53,6 +54,7 @@ impl Setting {
             Self::DisconnectedDevice(d) => config.disconnected_device = Some(d),
             Self::NotifySwitch(v) => config.notify_switch = v,
             Self::NotifyBattery(v) => config.notify_battery = v,
+            Self::AutoUpdate(v) => config.auto_update = v,
         }
     }
 }
@@ -62,6 +64,8 @@ pub enum Command {
     Set(Setting),
     /// 設定ファイルではなくレジストリの Run キーに書くため、`Setting` とは別。反転後の値を持つ
     Autostart(bool),
+    /// 今すぐ最新のリリースを確認する。`auto_update` がオフでも使える
+    CheckUpdate,
     OpenLogs,
     Quit,
 }
@@ -176,7 +180,10 @@ pub fn menu(
             Command::Set(Setting::NotifyBattery(!config.notify_battery)),
         ),
         entry("Windows 起動時に開始", autostart, Command::Autostart(!autostart)),
+        entry("自動で更新する", config.auto_update, Command::Set(Setting::AutoUpdate(!config.auto_update))),
         Item::Separator,
+        label(format!("バージョン {}", env!("CARGO_PKG_VERSION"))),
+        entry("更新を確認", false, Command::CheckUpdate),
         entry("ログフォルダを開く", false, Command::OpenLogs),
         entry("終了", false, Command::Quit),
     ]
@@ -269,6 +276,7 @@ mod tests {
             command(find(&m, "バッテリー低下を通知")),
             Some(Command::Set(Setting::NotifyBattery(false)))
         );
+        assert_eq!(command(find(&m, "自動で更新する")), Some(Command::Set(Setting::AutoUpdate(false))));
         assert_eq!(command(find(&m, "終了")), Some(Command::Quit));
     }
 
@@ -356,6 +364,7 @@ mod tests {
         Setting::DisconnectedDevice(dev("speaker")).apply(&mut c);
         Setting::NotifySwitch(false).apply(&mut c);
         Setting::NotifyBattery(false).apply(&mut c);
+        Setting::AutoUpdate(false).apply(&mut c);
         assert_eq!(
             c,
             Config {
@@ -364,8 +373,23 @@ mod tests {
                 disconnected_device: Some(dev("speaker")),
                 notify_switch: false,
                 notify_battery: false,
+                auto_update: false,
                 ..Config::default()
             }
         );
+    }
+
+    #[test]
+    fn version_label_is_not_selectable() {
+        let m = menu(&Config::default(), &endpoints(), None, Status::Connected, None, false);
+        let text = format!("バージョン {}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(command(find(&m, &text)), None);
+    }
+
+    #[test]
+    fn check_update_is_selectable_even_when_auto_update_is_off() {
+        let c = Config { auto_update: false, ..Config::default() };
+        let m = menu(&c, &endpoints(), None, Status::Connected, None, false);
+        assert_eq!(command(find(&m, "更新を確認")), Some(Command::CheckUpdate));
     }
 }

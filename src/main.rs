@@ -13,6 +13,7 @@ mod probe;
 mod state;
 mod switch;
 mod tray;
+mod update;
 
 use anyhow::{Result, bail};
 use hid::watch::HidEvent;
@@ -28,10 +29,15 @@ fn main() -> Result<()> {
         Some("watch") => watch(),
         Some("list") => list(),
         Some("set") => set(&args[1..]),
+        Some("version") => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        Some("check-update") => check_update(),
         None | Some("run") => run(),
         _ => {
             eprintln!(
-                "usage: inzone-buds-switcher [run | probe [--battery <秒>] [--query <16進,...>] [--vendor-only] | watch | list | set <id> [--communications]]"
+                "usage: inzone-buds-switcher [run | probe [--battery <秒>] [--query <16進,...>] [--vendor-only] | watch | list | set <id> [--communications] | version | check-update]"
             );
             bail!("サブコマンドを指定してください");
         }
@@ -50,14 +56,39 @@ fn attach_console() {
 /// トレイに常駐し、接続/切断が確定したら出力を切り替える
 fn run() -> Result<()> {
     // 二重起動は静かに終わる。スタートアップとの重複などで日常的に起こりうるため、ダイアログは出さない
-    let Some(_instance) = instance::acquire()? else {
+    let Some(instance) = instance::acquire()? else {
         tracing::info!("すでに起動しているため終了します");
         return Ok(());
     };
-    let _com = audio::ComGuard::new()?;
-    let path = config::path()?;
-    tracing::info!("設定: {}", path.display());
-    tray::run(app::App::new(path)?)
+    tracing::info!("v{} を起動しました", env!("CARGO_PKG_VERSION"));
+    // 自動更新で名前を変える前のパス。起動し直すときもこのパスを使う
+    let exe = std::env::current_exe()?;
+    let exit = {
+        let _com = audio::ComGuard::new()?;
+        let path = config::path()?;
+        tracing::info!("設定: {}", path.display());
+        tray::run(app::App::new(path)?, exe.clone())?
+    };
+    if exit == tray::Exit::Restart {
+        // 先に手放さないと、新しいプロセスが二重起動とみなして終わる
+        drop(instance);
+        tracing::info!("{} を起動し直します", exe.display());
+        std::process::Command::new(&exe).spawn()?;
+    }
+    Ok(())
+}
+
+/// 最新のリリースを問い合わせて結果を出す。置き換えはしない
+fn check_update() -> Result<()> {
+    match update::check()? {
+        update::release::Decision::UpToDate(v) => {
+            println!("最新です（リリース v{v}、この exe は v{}）", env!("CARGO_PKG_VERSION"))
+        }
+        update::release::Decision::Update(t) => {
+            println!("v{} があります（この exe は v{}）: {}", t.version, env!("CARGO_PKG_VERSION"), t.url)
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn log_update(u: &app::Update) {
