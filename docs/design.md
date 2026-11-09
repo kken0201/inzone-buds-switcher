@@ -58,6 +58,7 @@ src/
     mod.rs         トレイアイコン・メニューの表示とメッセージループ
     view.rs        ツールチップとメニューの中身（純粋関数。単体テスト対象）
     icon.rs        アイコンの描画
+    shape.rs       アイコンの形と色（build.rs と共有）
   notify.rs        通知
   config.rs        設定ファイル
   autostart.rs     スタートアップ登録
@@ -135,6 +136,7 @@ src/
   - 接続中は緑の円、切断中は灰色の円、状態が分からないとき（ドングル未検出、ドングルはあるが接続状態の確認中）は灰色の輪。形と色の両方を変え、色を見分けにくくても区別できるようにする
   - 中間の明るさの色にして、ダーク・ライトどちらのタスクバーでも見えるようにする
   - 実行時に描く（`CreateIconIndirect`）。アイコンのファイルを持たずに exe 1 つで済ませるため
+  - 形と色は `tray/shape.rs` に置き、exe のアイコン（[6](#6-配布)）も同じ関数で描く。`build.rs` から `#[path]` で読み込むため、このファイルは標準ライブラリ以外に依存させない
 - ツールチップ：`INZONE Buds  L 80% / R 75% / C 60%`（不明な値は `--`）
   - ドングルが外れたら残量を消す。ケースに戻した側の残量も消す。次の問い合わせ（最大 30 秒後）まで古い値が残るのを避けるため
 - 左クリック・右クリックのどちらでもメニューを開く
@@ -269,7 +271,7 @@ L 80% / R 75% / ケース 60%
 | 設定 | `serde`, `serde_json` |
 | ログ | `tracing`, `tracing-subscriber`, `tracing-appender` |
 | エラー処理 | `anyhow` |
-| exe へのアイコン埋め込み | `embed-resource` または `winresource` |
+| exe へのアイコン埋め込み | `embed-resource`（build-dependencies。`.rc` を書いてリソースコンパイラに渡すだけで、バージョン情報などの生成機能は使わないため） |
 
 トレイに `tray-icon` / `muda` は使わない。通知（[4.5](#45-通知)）は同じトレイアイコンに `NIF_INFO` でバルーンを出すが、`tray-icon` はこれを公開していないため。依存も増やさずに済む。
 
@@ -278,10 +280,22 @@ L 80% / R 75% / ケース 60%
 ## 6. 配布
 
 - `#![windows_subsystem = "windows"]` でコンソールを出さない
+  - サブコマンド（[7](#7-開発用サブコマンド)）の出力のため、起動時に `AttachConsole(ATTACH_PARENT_PROCESS)` で親のコンソールにつなぐ。エクスプローラーやスタートアップから起動したときは親がなく、何もしない
+  - 標準出力がすでにある（リダイレクトやパイプ）ときはつながない。つなぐと標準ハンドルがコンソールに置き換わり、リダイレクト先に何も出なくなるため
+  - PowerShell は GUI サブシステムの exe の終了を待たないため、直接実行すると出力がプロンプトの後に出る。`cmd /c` 経由か、パイプでつないで実行する
 - `.cargo/config.toml` に `-C target-feature=+crt-static` を設定し、VC++ ランタイムなしで動かす
-- `cargo build --release` で生成した exe 1 つを GitHub Releases に zip で置く
-- GitHub Actions（`windows-latest`）でタグを push したら自動ビルドする
+  - リリースビルドの exe が読み込む DLL は OS 付属のものだけ（`vcruntime140.dll` や `api-ms-win-crt-*` を含まない）ことを、PE のインポート表で確認した。VC++ ランタイムを入れていない PC での起動は未確認
+- exe のアイコンは `build.rs` でトレイの「接続中」と同じ緑の円を描き（16〜256 px の 6 サイズ）、`.ico` を `OUT_DIR` に書いて埋め込む。画像ファイルをリポジトリに置かず、トレイアイコンと見た目がずれないようにするため
+- GitHub Actions（`windows-latest`、`.github/workflows/release.yml`）で、`v*` のタグを push したらテストとリリースビルドを行い、exe と LICENSE を入れた `inzone-buds-switcher-<タグ>.zip` を GitHub Releases に置く
+  - タグが `Cargo.toml` の `version` と一致しない（`v0.1.0` と `0.1.0` のように）ときは失敗させる。exe の版とリリース名がずれるのを防ぐため
+  - リリースノートは GitHub の自動生成を使う
+- ライセンスは MIT（`LICENSE`）。zip に LICENSE を同梱するのは、MIT が複製物に著作権表示と許諾文を含めることを求めるため
 - exe はコード署名しない。そのため初回起動時に SmartScreen の警告が出るので、README で回避手順（「詳細情報」→「実行」）を案内する
+
+### リリースの手順
+
+1. `Cargo.toml` の `version` を上げ、`cargo build` で `Cargo.lock` を更新してコミットする
+2. `git tag v<version>` を作って push する
 
 ## 7. 開発用サブコマンド
 

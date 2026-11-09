@@ -9,49 +9,16 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, DestroyIcon, GetSystemMetrics, HICON, ICONINFO, SM_CXSMICON,
 };
 
+use super::shape::{GRAY, GREEN, Shape, pixels};
 use super::view::Status;
-
-#[derive(Clone, Copy)]
-enum Shape {
-    Disc,
-    Ring,
-}
 
 /// 接続中は緑の円、切断中は灰色の円、状態が分からないときは灰色の輪
 fn look(status: Status) -> (Shape, [u8; 3]) {
     match status {
-        Status::Connected => (Shape::Disc, [0x22, 0xC5, 0x5E]),
-        Status::Disconnected => (Shape::Disc, [0x94, 0xA3, 0xB8]),
-        Status::NoDongle | Status::Checking => (Shape::Ring, [0x94, 0xA3, 0xB8]),
+        Status::Connected => (Shape::Disc, GREEN),
+        Status::Disconnected => (Shape::Disc, GRAY),
+        Status::NoDongle | Status::Checking => (Shape::Ring, GRAY),
     }
-}
-
-/// 上から下への BGRA。縁は 4x4 のサンプリングでなめらかにする
-fn pixels(size: usize, shape: Shape, [r, g, b]: [u8; 3]) -> Vec<u8> {
-    let c = size as f32 / 2.0;
-    let outer = size as f32 * 0.44;
-    let inner = match shape {
-        Shape::Disc => 0.0,
-        Shape::Ring => size as f32 * 0.26,
-    };
-    let mut out = Vec::with_capacity(size * size * 4);
-    for y in 0..size {
-        for x in 0..size {
-            let mut hits = 0;
-            for sy in 0..4 {
-                for sx in 0..4 {
-                    let dx = x as f32 + (sx as f32 + 0.5) / 4.0 - c;
-                    let dy = y as f32 + (sy as f32 + 0.5) / 4.0 - c;
-                    let d = (dx * dx + dy * dy).sqrt();
-                    if d <= outer && d >= inner {
-                        hits += 1;
-                    }
-                }
-            }
-            out.extend_from_slice(&[b, g, r, (hits * 255 / 16) as u8]);
-        }
-    }
-    out
 }
 
 pub struct Icons {

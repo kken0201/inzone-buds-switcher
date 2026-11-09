@@ -1,0 +1,3 @@
+# VC++ ランタイム（vcruntime140.dll）のない PC でも exe 単体で動かすため、CRT を静的リンクする
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

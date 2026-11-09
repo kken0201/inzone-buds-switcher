@@ -1,3 +1,6 @@
+// コンソールウィンドウを出さない。サブコマンドの出力は main で親のコンソールにつないで出す
+#![windows_subsystem = "windows"]
+
 mod app;
 mod audio;
 mod autostart;
@@ -13,8 +16,10 @@ mod tray;
 
 use anyhow::{Result, bail};
 use hid::watch::HidEvent;
+use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 
 fn main() -> Result<()> {
+    attach_console();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let tray = matches!(args.first().map(String::as_str), None | Some("run"));
     logging::init(tray);
@@ -30,6 +35,15 @@ fn main() -> Result<()> {
             );
             bail!("サブコマンドを指定してください");
         }
+    }
+}
+
+/// 端末から起動したときは、親のコンソールに出力する。エクスプローラーやスタートアップからの起動では親がなく、何もしない。
+/// 標準出力がすでにある（リダイレクトやパイプ）ときはつながない。つなぐとそのハンドルが置き換わり、リダイレクト先に出なくなるため
+fn attach_console() {
+    let redirected = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.is_ok_and(|h| !h.0.is_null() && !h.is_invalid());
+    if !redirected {
+        let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
     }
 }
 
