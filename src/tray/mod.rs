@@ -4,6 +4,7 @@
 //! HID 監視スレッドのイベントは転送スレッドがチャネルに入れ、`WM_HID` でループを起こす。
 
 mod icon;
+mod shape;
 pub mod view;
 
 use std::cell::{Cell, RefCell};
