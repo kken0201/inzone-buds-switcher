@@ -354,6 +354,11 @@ GitHub Releases に新しい版があれば、exe をダウンロードして置
 - GitHub Actions（`windows-latest`、`.github/workflows/release.yml`）で、`v*` のタグを push したらテストとリリースビルドを行い、exe と LICENSE を入れた `inzone-buds-switcher-<タグ>.zip` と、自動更新（[4.8](#48-自動更新)）が取ってくる exe 単体（`inzone-buds-switcher.exe`）を GitHub Releases に置く
   - タグが `Cargo.toml` の `version` と一致しない（`v0.1.0` と `0.1.0` のように）ときは失敗させる。exe の版とリリース名がずれるのを防ぐため
   - リリースノートは GitHub の自動生成を使う
+- PR では `.github/workflows/ci.yml` が `cargo test --locked` を走らせる。main のルールセットで、これが通らない PR はマージできないようにしている
+- 依存の更新は Dependabot（`.github/dependabot.yml`）が週 1 回 PR を作る。対象はクレートと GitHub Actions
+  - 公開から 7 日たった版だけを提案させる。悪意のある版は公開後すぐに見つかって取り下げられることが多いため
+  - クレートのパッチ更新と、Actions のメジャー以外の更新は、CI が通れば自動でマージする（`.github/workflows/dependabot-auto-merge.yml`）。クレートのマイナー更新を手で確かめるのは、0.x のクレートではマイナー更新で互換性が崩れるうえ、テストでは実機の動作まで確かめられないため
+  - Actions はタグではなくコミット SHA で指定する。タグは後から別のコミットに付け替えられるため
 - ライセンスは MIT（`LICENSE`）。zip に LICENSE を同梱するのは、MIT が複製物に著作権表示と許諾文を含めることを求めるため
 - exe はコード署名しない。そのため初回起動時に SmartScreen の警告が出るので、README で回避手順（「詳細情報」→「実行」）を案内する
 
