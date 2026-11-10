@@ -24,10 +24,10 @@ pub enum Obs {
     DongleLost,
 }
 
-/// 確定した状態の変化。出力を切り替えてよいのは `Changed` だけ
+/// 確定した状態の変化。`Lost` のときは出力を変えない
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transition {
-    /// Unknown から状態が決まった（起動直後・ドングルの差し直し）。出力は変えない
+    /// Unknown から状態が決まった（起動直後・ドングルの差し直し）
     Established { connected: bool },
     /// ドングルを失って Unknown になった
     Lost,

@@ -70,7 +70,7 @@ pub fn for_outcome(outcome: &Outcome, config: &Config) -> Option<Notice> {
             (Kind::Warning, "⚠ INZONE Buds の出力デバイスが見つかりません".into())
         }
         Outcome::Failed(_) => (Kind::Warning, "⚠ 出力を切り替えられませんでした".into()),
-        Outcome::Skipped(Skip::Disabled | Skip::UserChanged) => return None,
+        Outcome::Skipped(Skip::Disabled | Skip::UserChanged | Skip::OnDongle) => return None,
     };
     let enabled = match kind {
         Kind::Switch => config.notify_switch,
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn disabled_and_user_changed_are_silent() {
-        for s in [Skip::Disabled, Skip::UserChanged] {
+        for s in [Skip::Disabled, Skip::UserChanged, Skip::OnDongle] {
             assert_eq!(notice(Outcome::Skipped(s), &Config::default()), None);
         }
     }
