@@ -1,6 +1,8 @@
 //! トレイアイコンを実行時に描く。アイコンのファイルを持たずに済ませるため。
 //! 中間の明るさの色にして、ダーク・ライトどちらのタスクバーでも見えるようにする。
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS, DeleteObject,
@@ -9,54 +11,47 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, DestroyIcon, GetSystemMetrics, HICON, ICONINFO, SM_CXSMICON,
 };
 
-use super::shape::{GRAY, GREEN, Shape, pixels};
-use super::view::Status;
+use super::shape::{GRAY, Shape, batteries, pixels};
+use super::view::Icon;
 
-/// 接続中は緑の円、切断中は灰色の円、状態が分からないときは灰色の輪
-fn look(status: Status) -> (Shape, [u8; 3]) {
-    match status {
-        Status::Connected => (Shape::Disc, GREEN),
-        Status::Disconnected => (Shape::Disc, GRAY),
-        Status::NoDongle | Status::Checking => (Shape::Ring, GRAY),
-    }
-}
-
+/// 描いたアイコンを絵ごとに持ち、同じ絵を描き直さない。
+/// 絵は左右それぞれ 13 通り（空の枠、0–5 段 × 赤かどうか）の組み合わせと 2 状態に限られるので、捨てずに持ち続ける
 pub struct Icons {
-    connected: HICON,
-    disconnected: HICON,
-    unknown: HICON,
+    size: usize,
+    drawn: HashMap<Icon, HICON>,
 }
 
 impl Icons {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Self {
         let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16) as usize;
-        Ok(Self {
-            connected: draw(size, Status::Connected)?,
-            disconnected: draw(size, Status::Disconnected)?,
-            unknown: draw(size, Status::NoDongle)?,
-        })
+        Self { size, drawn: HashMap::new() }
     }
 
-    pub fn get(&self, status: Status) -> HICON {
-        match status {
-            Status::Connected => self.connected,
-            Status::Disconnected => self.disconnected,
-            Status::NoDongle | Status::Checking => self.unknown,
+    pub fn get(&mut self, icon: Icon) -> Result<HICON> {
+        if let Some(&h) = self.drawn.get(&icon) {
+            return Ok(h);
         }
+        let h = draw(self.size, icon)?;
+        self.drawn.insert(icon, h);
+        Ok(h)
     }
 }
 
 impl Drop for Icons {
     fn drop(&mut self) {
-        for icon in [self.connected, self.disconnected, self.unknown] {
+        for &icon in self.drawn.values() {
             let _ = unsafe { DestroyIcon(icon) };
         }
     }
 }
 
-fn draw(size: usize, status: Status) -> Result<HICON> {
-    let (shape, rgb) = look(status);
-    let px = pixels(size, shape, rgb);
+/// 切断中は灰色の円、状態が分からないときは灰色の輪。形を変え、色を見分けにくくても区別できるようにする
+fn draw(size: usize, icon: Icon) -> Result<HICON> {
+    let px = match icon {
+        Icon::Batteries(gauges) => batteries(size, gauges),
+        Icon::Disconnected => pixels(size, Shape::Disc, GRAY),
+        Icon::Unknown => pixels(size, Shape::Ring, GRAY),
+    };
     let info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: size_of::<BITMAPINFOHEADER>() as u32,

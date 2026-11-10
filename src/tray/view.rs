@@ -6,6 +6,8 @@ use crate::config::{Config, DeviceRef};
 use crate::hid::protocol::Battery;
 use crate::state::Link;
 
+use super::shape::{Gauge, STEPS};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     NoDongle,
@@ -96,6 +98,33 @@ pub fn pct(v: Option<u8>) -> String {
 pub fn tooltip(battery: Option<Battery>) -> String {
     let b = battery.unwrap_or(NO_BATTERY);
     format!("INZONE Buds  L {} / R {} / C {}", pct(b.left), pct(b.right), pct(b.case))
+}
+
+/// トレイアイコンの絵。接続中は左右のバッテリーを描き、それ以外は状態だけを示す
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Icon {
+    Batteries([Gauge; 2]),
+    Disconnected,
+    Unknown,
+}
+
+pub fn icon(status: Status, battery: Option<Battery>, low_threshold: u8) -> Icon {
+    match status {
+        Status::Connected => {
+            let b = battery.unwrap_or(NO_BATTERY);
+            Icon::Batteries([b.left, b.right].map(|v| gauge(v, low_threshold)))
+        }
+        Status::Disconnected => Icon::Disconnected,
+        Status::NoDongle | Status::Checking => Icon::Unknown,
+    }
+}
+
+/// 1% でもあれば 1 段以上塗る。塗りのない絵を 0% のときだけにするため
+fn gauge(level: Option<u8>, low_threshold: u8) -> Gauge {
+    level.map_or(Gauge::Empty, |v| Gauge::Level {
+        steps: (u32::from(v.min(100)) * u32::from(STEPS)).div_ceil(100) as u8,
+        low: v <= low_threshold,
+    })
 }
 
 fn label(text: impl Into<String>) -> Item {
@@ -250,6 +279,25 @@ mod tests {
         let b = Battery { left: Some(80), right: None, case: Some(60) };
         assert_eq!(tooltip(Some(b)), "INZONE Buds  L 80% / R -- / C 60%");
         assert_eq!(tooltip(None), "INZONE Buds  L -- / R -- / C --");
+    }
+
+    #[test]
+    fn connected_icon_shows_each_side() {
+        let level = |steps, low| Gauge::Level { steps, low };
+        let icon_of = |left, right| icon(Status::Connected, Some(Battery { left, right, case: Some(50) }), 5);
+        assert_eq!(icon_of(Some(100), Some(81)), Icon::Batteries([level(5, false), level(5, false)]));
+        assert_eq!(icon_of(Some(80), Some(21)), Icon::Batteries([level(4, false), level(2, false)]));
+        assert_eq!(icon_of(Some(6), Some(5)), Icon::Batteries([level(1, false), level(1, true)]));
+        assert_eq!(icon_of(Some(0), None), Icon::Batteries([level(0, true), Gauge::Empty]));
+        assert_eq!(icon(Status::Connected, None, 5), Icon::Batteries([Gauge::Empty; 2]));
+    }
+
+    #[test]
+    fn other_statuses_ignore_battery() {
+        let b = Some(Battery { left: Some(80), right: Some(75), case: None });
+        assert_eq!(icon(Status::Disconnected, b, 5), Icon::Disconnected);
+        assert_eq!(icon(Status::Checking, b, 5), Icon::Unknown);
+        assert_eq!(icon(Status::NoDongle, None, 5), Icon::Unknown);
     }
 
     #[test]
