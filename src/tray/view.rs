@@ -41,6 +41,7 @@ pub enum Setting {
     AutoSwitch(bool),
     ConnectedDevice(DeviceRef),
     DisconnectedDevice(DeviceRef),
+    SwitchCommunications(bool),
     NotifySwitch(bool),
     NotifyBattery(bool),
     AutoUpdate(bool),
@@ -52,6 +53,7 @@ impl Setting {
             Self::AutoSwitch(v) => config.auto_switch = v,
             Self::ConnectedDevice(d) => config.connected_device = Some(d),
             Self::DisconnectedDevice(d) => config.disconnected_device = Some(d),
+            Self::SwitchCommunications(v) => config.switch_communications = v,
             Self::NotifySwitch(v) => config.notify_switch = v,
             Self::NotifyBattery(v) => config.notify_battery = v,
             Self::AutoUpdate(v) => config.auto_update = v,
@@ -170,6 +172,11 @@ pub fn menu(
             text: "今の出力を切断時の出力にする".into(), checked: false, command: use_current
         },
         entry(
+            "既定の通信デバイスを Chat にする",
+            config.switch_communications,
+            Command::Set(Setting::SwitchCommunications(!config.switch_communications)),
+        ),
+        entry(
             "切り替えを通知",
             config.notify_switch,
             Command::Set(Setting::NotifySwitch(!config.notify_switch)),
@@ -273,6 +280,10 @@ mod tests {
         assert_eq!(command(find(&m, "自動切り替え")), Some(Command::Set(Setting::AutoSwitch(false))));
         assert_eq!(command(find(&m, "切り替えを通知")), Some(Command::Set(Setting::NotifySwitch(true))));
         assert_eq!(
+            command(find(&m, "既定の通信デバイスを Chat にする")),
+            Some(Command::Set(Setting::SwitchCommunications(true)))
+        );
+        assert_eq!(
             command(find(&m, "バッテリー低下を通知")),
             Some(Command::Set(Setting::NotifyBattery(false)))
         );
@@ -362,6 +373,7 @@ mod tests {
         Setting::AutoSwitch(false).apply(&mut c);
         Setting::ConnectedDevice(dev("chat")).apply(&mut c);
         Setting::DisconnectedDevice(dev("speaker")).apply(&mut c);
+        Setting::SwitchCommunications(true).apply(&mut c);
         Setting::NotifySwitch(false).apply(&mut c);
         Setting::NotifyBattery(false).apply(&mut c);
         Setting::AutoUpdate(false).apply(&mut c);
@@ -371,6 +383,7 @@ mod tests {
                 auto_switch: false,
                 connected_device: Some(dev("chat")),
                 disconnected_device: Some(dev("speaker")),
+                switch_communications: true,
                 notify_switch: false,
                 notify_battery: false,
                 auto_update: false,
