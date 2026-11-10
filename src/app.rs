@@ -12,7 +12,7 @@ use crate::hid::protocol::Battery;
 use crate::hid::watch::HidEvent;
 use crate::notify::{self, LowAlert, LowFlags};
 use crate::state::{Link, Machine, Obs, Transition};
-use crate::switch::{self, Outcome};
+use crate::switch::{self, Current, Outcome, Skip};
 
 pub struct App {
     config: Config,
@@ -135,33 +135,45 @@ impl App {
     }
 
     fn switch(&mut self, connected: bool) -> Vec<Outcome> {
-        let (endpoints, current) = match self.endpoints() {
+        let (endpoints, default) = match self.endpoints() {
             Ok(v) => v,
             Err(e) => return vec![Outcome::Failed(format!("再生デバイスを取得できません: {e:#}"))],
         };
-        let current = current.as_deref();
-        let mut outcomes = Vec::new();
-        let (to, done): (DeviceRef, fn(DeviceRef) -> Outcome) = if connected {
-            match switch::on_connect(&self.config, &endpoints, current) {
-                Ok(c) => {
-                    if let Some(dev) = c.remember {
-                        self.update_config(|c| c.disconnected_device = Some(dev.clone()));
-                        outcomes.push(Outcome::Remembered(dev));
-                    }
-                    (c.to, Outcome::Switched)
-                }
-                Err(skip) => return vec![Outcome::Skipped(skip)],
-            }
-        } else {
-            match switch::on_disconnect(&self.config, &endpoints, current) {
-                Ok(to) => (to, Outcome::Restored),
-                Err(skip) => return vec![Outcome::Skipped(skip)],
-            }
+        let communications = match self.audio.communications_id() {
+            Ok(v) => v,
+            Err(e) => return vec![Outcome::Failed(format!("再生デバイスを取得できません: {e:#}"))],
         };
-        outcomes.push(match self.audio.set_default(&to.id, self.config.switch_communications) {
-            Ok(()) => done(to),
-            Err(e) => Outcome::Failed(format!("{} に切り替えられません: {e:#}", to.name)),
-        });
+        let current = Current { default: default.as_deref(), communications: communications.as_deref() };
+        let (default, communications, done): (Result<(DeviceRef, Option<DeviceRef>), Skip>, _, fn(DeviceRef) -> Outcome) =
+            if connected {
+                let plan = switch::on_connect(&self.config, &endpoints, current);
+                (plan.default.map(|c| (c.to, c.remember)), plan.communications, Outcome::Switched)
+            } else {
+                let plan = switch::on_disconnect(&self.config, &endpoints, current);
+                (plan.default.map(|to| (to, None)), plan.communications, Outcome::Restored)
+            };
+        if connected && self.config.auto_switch && self.config.switch_communications && communications.is_none() {
+            tracing::warn!("Chat のデバイスが見つからないため、既定の通信デバイスは切り替えません");
+        }
+        let mut outcomes = Vec::new();
+        match default {
+            Err(skip) => outcomes.push(Outcome::Skipped(skip)),
+            Ok((to, remember)) => {
+                if let Some(dev) = remember {
+                    self.update_config(|c| c.disconnected_device = Some(dev.clone()));
+                    outcomes.push(Outcome::Remembered(dev));
+                }
+                outcomes.push(match self.audio.set_default(&to.id) {
+                    Ok(()) => done(to),
+                    Err(e) => Outcome::Failed(format!("{} に切り替えられません: {e:#}", to.name)),
+                });
+            }
+        }
+        if let Some(to) = communications {
+            if let Err(e) = self.audio.set_communications(&to.id) {
+                outcomes.push(Outcome::Failed(format!("既定の通信デバイスを {} に切り替えられません: {e:#}", to.name)));
+            }
+        }
         outcomes
     }
 }

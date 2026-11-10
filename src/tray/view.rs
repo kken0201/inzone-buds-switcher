@@ -172,7 +172,7 @@ pub fn menu(
             text: "今の出力を切断時の出力にする".into(), checked: false, command: use_current
         },
         entry(
-            "通話アプリの出力も切り替える",
+            "既定の通信デバイスを Chat にする",
             config.switch_communications,
             Command::Set(Setting::SwitchCommunications(!config.switch_communications)),
         ),
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(command(find(&m, "自動切り替え")), Some(Command::Set(Setting::AutoSwitch(false))));
         assert_eq!(command(find(&m, "切り替えを通知")), Some(Command::Set(Setting::NotifySwitch(true))));
         assert_eq!(
-            command(find(&m, "通話アプリの出力も切り替える")),
+            command(find(&m, "既定の通信デバイスを Chat にする")),
             Some(Command::Set(Setting::SwitchCommunications(true)))
         );
         assert_eq!(

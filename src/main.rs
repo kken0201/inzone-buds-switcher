@@ -173,5 +173,10 @@ fn set(args: &[String]) -> Result<()> {
         bail!("set <エンドポイント ID> [--communications]");
     };
     let _com = audio::ComGuard::new()?;
-    audio::Audio::new()?.set_default(id, communications)
+    let audio = audio::Audio::new()?;
+    audio.set_default(id)?;
+    if communications {
+        audio.set_communications(id)?;
+    }
+    Ok(())
 }
