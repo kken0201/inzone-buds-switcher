@@ -170,8 +170,12 @@ impl App {
             }
         }
         if let Some(to) = communications {
-            if let Err(e) = self.audio.set_communications(&to.id) {
-                outcomes.push(Outcome::Failed(format!("既定の通信デバイスを {} に切り替えられません: {e:#}", to.name)));
+            match self.audio.set_communications(&to.id) {
+                Ok(()) => tracing::info!("既定の通信デバイスを {} に切り替えました", to.name),
+                Err(e) => outcomes.push(Outcome::Failed(format!(
+                    "既定の通信デバイスを {} に切り替えられません: {e:#}",
+                    to.name
+                ))),
             }
         }
         outcomes
