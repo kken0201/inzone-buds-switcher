@@ -29,6 +29,8 @@ pub enum Skip {
     Missing(DeviceRef),
     /// 切断時点の既定デバイスがドングルのデバイスではない（接続中に利用者が手動で変えた）
     UserChanged,
+    /// Connected に決まった時点で、既定デバイスがすでにドングルのデバイス
+    OnDongle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,10 @@ fn find<'a>(endpoints: &'a [Endpoint], id: &str) -> Option<&'a Endpoint> {
 
 fn device_ref(e: &Endpoint) -> DeviceRef {
     DeviceRef { id: e.id.clone(), name: e.name.clone() }
+}
+
+fn on_dongle(endpoints: &[Endpoint], id: Option<&str>) -> bool {
+    id.and_then(|id| find(endpoints, id)).is_some_and(|e| e.kind.is_some())
 }
 
 fn present(endpoints: &[Endpoint], dev: &DeviceRef) -> Result<DeviceRef, Skip> {
@@ -83,6 +89,23 @@ pub fn on_connect(config: &Config, endpoints: &[Endpoint], current: Current) -> 
         .then(|| endpoints.iter().find(|e| e.kind == Some(DongleKind::Chat)).map(device_ref))
         .flatten();
     Plan { default: connect_default(config, endpoints, current.default), communications }
+}
+
+/// Unknown から Connected に決まったとき（起動直後・ドングルの挿し直し）。
+/// すでにドングルのデバイスを向いているロールは触らない。接続中に利用者が選んだドングルのデバイス（Chat など）を
+/// 起動のたびに上書きしないため
+pub fn on_established_connect(config: &Config, endpoints: &[Endpoint], current: Current) -> Plan<Connect> {
+    let mut plan = on_connect(config, endpoints, current);
+    if !config.auto_switch {
+        return plan;
+    }
+    if on_dongle(endpoints, current.default) {
+        plan.default = Err(Skip::OnDongle);
+    }
+    if on_dongle(endpoints, current.communications) {
+        plan.communications = None;
+    }
+    plan
 }
 
 fn connect_default(
@@ -126,7 +149,7 @@ fn disconnect_default(
     endpoints: &[Endpoint],
     current: Option<&str>,
 ) -> Result<DeviceRef, Skip> {
-    if current.and_then(|id| find(endpoints, id)).is_none_or(|e| e.kind.is_none()) {
+    if !on_dongle(endpoints, current) {
         return Err(Skip::UserChanged);
     }
     present(endpoints, config.disconnected_device.as_ref().ok_or(Skip::NotConfigured)?)
@@ -140,8 +163,7 @@ fn disconnect_communications(
     if !config.switch_communications {
         return None;
     }
-    let on_dongle = current.and_then(|id| find(endpoints, id)).is_some_and(|e| e.kind.is_some());
-    if !on_dongle {
+    if !on_dongle(endpoints, current) {
         return None;
     }
     present(endpoints, config.disconnected_device.as_ref()?).ok()
@@ -346,5 +368,42 @@ mod tests {
         let plan = on_disconnect(&with_comms("speaker"), &endpoints(), cur(Some("speaker"), Some("chat")));
         assert_eq!(plan.default, Err(Skip::UserChanged));
         assert_eq!(plan.communications, Some(dev("speaker")));
+    }
+
+    #[test]
+    fn established_connect_switches_from_non_dongle_like_normal_connect() {
+        let c = Config { switch_communications: true, ..Config::default() };
+        let current = cur(Some("speaker"), Some("speaker"));
+        assert_eq!(on_established_connect(&c, &endpoints(), current), on_connect(&c, &endpoints(), current));
+    }
+
+    #[test]
+    fn established_connect_leaves_roles_already_on_dongle() {
+        let plan = on_established_connect(&with_comms("speaker"), &endpoints(), cur(Some("chat"), Some("game")));
+        assert_eq!(plan.default, Err(Skip::OnDongle));
+        assert_eq!(plan.communications, None);
+    }
+
+    #[test]
+    fn established_connect_judges_roles_independently() {
+        let plan = on_established_connect(&with_comms("speaker"), &endpoints(), cur(Some("game"), Some("speaker")));
+        assert_eq!(plan.default, Err(Skip::OnDongle));
+        assert_eq!(plan.communications, Some(dev("chat")));
+        let plan = on_established_connect(&with_comms("speaker"), &endpoints(), cur(Some("speaker"), Some("chat")));
+        assert_eq!(plan.default.unwrap().to, dev("game"));
+        assert_eq!(plan.communications, None);
+    }
+
+    #[test]
+    fn established_connect_on_dongle_does_not_warn_about_missing_target() {
+        let c = Config { connected_device: Some(dev("gone")), ..Config::default() };
+        assert_eq!(on_established_connect(&c, &endpoints(), cur(Some("game"), None)).default, Err(Skip::OnDongle));
+    }
+
+    #[test]
+    fn established_connect_disabled_touches_no_role() {
+        let c = Config { auto_switch: false, ..with_comms("speaker") };
+        let plan = Plan::<Connect> { default: Err(Skip::Disabled), communications: None };
+        assert_eq!(on_established_connect(&c, &endpoints(), cur(Some("game"), Some("speaker"))), plan);
     }
 }

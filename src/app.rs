@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::audio::{Audio, Endpoint};
+use crate::audio::{Audio, DongleKind, Endpoint};
 use crate::config::{self, Config, DeviceRef};
 use crate::hid::protocol::Battery;
 use crate::hid::watch::HidEvent;
@@ -30,7 +30,7 @@ pub struct App {
 #[derive(Debug)]
 pub struct Update {
     pub transition: Transition,
-    /// `Transition::Changed` のときだけ空でない
+    /// `Transition::Lost` のときは空
     pub outcomes: Vec<Outcome>,
 }
 
@@ -128,13 +128,15 @@ impl App {
 
     fn apply(&mut self, transition: Transition) -> Update {
         let outcomes = match transition {
-            Transition::Changed { connected } => self.switch(connected),
-            Transition::Established { .. } | Transition::Lost => Vec::new(),
+            Transition::Changed { connected } => self.switch(connected, false),
+            Transition::Established { connected } => self.switch(connected, true),
+            Transition::Lost => Vec::new(),
         };
         Update { transition, outcomes }
     }
 
-    fn switch(&mut self, connected: bool) -> Vec<Outcome> {
+    /// `established` は Unknown から決まったとき（docs/design.md 4.2）
+    fn switch(&mut self, connected: bool, established: bool) -> Vec<Outcome> {
         let (endpoints, default) = match self.endpoints() {
             Ok(v) => v,
             Err(e) => return vec![Outcome::Failed(format!("再生デバイスを取得できません: {e:#}"))],
@@ -146,13 +148,18 @@ impl App {
         let current = Current { default: default.as_deref(), communications: communications.as_deref() };
         let (default, communications, done): (Result<(DeviceRef, Option<DeviceRef>), Skip>, _, fn(DeviceRef) -> Outcome) =
             if connected {
-                let plan = switch::on_connect(&self.config, &endpoints, current);
+                let plan = if established {
+                    switch::on_established_connect(&self.config, &endpoints, current)
+                } else {
+                    switch::on_connect(&self.config, &endpoints, current)
+                };
                 (plan.default.map(|c| (c.to, c.remember)), plan.communications, Outcome::Switched)
             } else {
                 let plan = switch::on_disconnect(&self.config, &endpoints, current);
                 (plan.default.map(|to| (to, None)), plan.communications, Outcome::Restored)
             };
-        if connected && self.config.auto_switch && self.config.switch_communications && communications.is_none() {
+        let no_chat = !endpoints.iter().any(|e| e.kind == Some(DongleKind::Chat));
+        if connected && self.config.auto_switch && self.config.switch_communications && no_chat {
             tracing::warn!("Chat のデバイスが見つからないため、既定の通信デバイスは切り替えません");
         }
         let mut outcomes = Vec::new();

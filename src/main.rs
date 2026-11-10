@@ -96,7 +96,7 @@ pub(crate) fn log_update(u: &app::Update) {
     use switch::{Outcome, Skip};
     match u.transition {
         Transition::Established { connected } => {
-            tracing::info!("状態確定: {}（切り替えない）", if connected { "接続" } else { "切断" })
+            tracing::info!("状態確定: {}", if connected { "接続" } else { "切断" })
         }
         Transition::Lost => tracing::info!("状態不明（ドングルなし）"),
         Transition::Changed { connected } => {
@@ -111,6 +111,9 @@ pub(crate) fn log_update(u: &app::Update) {
             Outcome::Skipped(Skip::Disabled) => tracing::info!("自動切り替えがオフ"),
             Outcome::Skipped(Skip::UserChanged) => {
                 tracing::info!("既定デバイスが手動で変えられているため戻さない")
+            }
+            Outcome::Skipped(Skip::OnDongle) => {
+                tracing::info!("既定デバイスがすでにドングルのデバイスのため切り替えない")
             }
             Outcome::Skipped(Skip::NoGameDevice) => {
                 tracing::warn!("INZONE Buds - Game が見つからないため切り替えない")
