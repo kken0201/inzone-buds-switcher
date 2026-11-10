@@ -37,7 +37,7 @@ use crate::notify::{self, Kind, Notice};
 use crate::hid::watch::HidEvent;
 use crate::update;
 use icon::Icons;
-use view::{Command, Item, Setting, Status};
+use view::{Command, Icon, Item, Setting, Status};
 
 const WM_HID: u32 = WM_APP;
 const WM_TRAY: u32 = WM_APP + 1;
@@ -60,7 +60,7 @@ struct Tray {
     restart_pending: bool,
     icons: Icons,
     /// 最後にシェルへ渡した表示。None はアイコンがまだ（または Explorer の再起動で）ない
-    shown: Option<(Status, String)>,
+    shown: Option<(Icon, String)>,
 }
 
 thread_local! {
@@ -106,7 +106,7 @@ pub fn run(app: App, exe: PathBuf) -> Result<Exit> {
         update_requests,
         update_enabled,
         restart_pending: false,
-        icons: Icons::new()?,
+        icons: Icons::new(),
         shown: None,
     };
     TRAY.with(|t| *t.borrow_mut() = Some(tray));
@@ -460,14 +460,22 @@ impl Tray {
     /// 表示が変わったときだけシェルに渡す。追加に失敗したら、次のイベントで追加し直す
     fn show(&mut self) {
         let status = Status::of(self.app.dongle(), self.app.link());
+        let icon = view::icon(status, self.app.battery(), self.app.config().low_battery_threshold);
         let tip = view::tooltip(self.app.battery());
-        if self.shown.as_ref().is_some_and(|(s, t)| *s == status && *t == tip) {
+        if self.shown.as_ref().is_some_and(|(i, t)| *i == icon && *t == tip) {
             return;
         }
+        let hicon = match self.icons.get(icon) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("トレイアイコンを描けません: {e:#}");
+                return;
+            }
+        };
         let mut nid = self.nid();
         nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_SHOWTIP;
         nid.uCallbackMessage = WM_TRAY;
-        nid.hIcon = self.icons.get(status);
+        nid.hIcon = hicon;
         copy_wide(&mut nid.szTip, &tip);
         let ok = unsafe {
             if self.shown.is_none() {
@@ -482,8 +490,8 @@ impl Tray {
             if self.shown.is_none() {
                 tracing::info!("トレイアイコンを追加しました");
             }
-            tracing::info!("表示: {status:?} / {tip}");
-            self.shown = Some((status, tip));
+            tracing::info!("表示: {status:?} {icon:?} / {tip}");
+            self.shown = Some((icon, tip));
         } else {
             tracing::warn!("トレイアイコンを更新できません");
             self.shown = None;
