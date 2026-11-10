@@ -306,7 +306,7 @@ GitHub Releases に新しい版があれば、exe をダウンロードして置
 - **版の比較**：タグ `v<major>.<minor>.<patch>` を数値で比べ、今の版より大きいときだけ更新する。`-rc.1` などが付いたタグや読めないタグでは更新しない
 - **取ってくるもの**：リリースの `inzone-buds-switcher.exe`（zip とは別に、exe 単体も置く。[6](#6-配布)）。zip を展開する処理を持たずに済むため
 - **置き換えの手順**：exe と同じフォルダで行う
-  1. `<名前>.new.exe` に書き出す。大きさが API の `size` と一致しなければやめる
+  1. ダウンロードした中身の大きさと SHA-256 が、API の `size` と `digest`（GitHub が asset を上げたときに計算した値）に一致するか確かめ、一致したら `<名前>.new.exe` に書き出す。`digest` がないときや読めないときも更新しない。ダウンロード先（`objects.githubusercontent.com`）は API（`api.github.com`）と別のホストなので、その途中で壊れたり差し替えられたりした exe で置き換えないため
   2. `<名前>.new.exe version` を実行し、標準出力がリリースの版と一致するか確かめる（10 秒で打ち切る）。起動できない exe や別の版で置き換えないため
   3. 実行中の exe を `<名前>.old.exe` に名前を変えて退避し、`<名前>.new.exe` を元の名前にする。実行中の exe は消せないが、名前は変えられるため。2 つ目の名前変更に失敗したら、退避した exe を元の名前に戻す
   - 名前を変えるだけなので、スタートアップ（[4.7](#47-その他)）に登録したパスはそのまま使える
@@ -321,7 +321,7 @@ GitHub Releases に新しい版があれば、exe をダウンロードして置
   - 結果が分かるよう、最新だったとき・確認やダウンロードに失敗したとき・置き換えに失敗したときも通知する（自動のときは置き換えの失敗だけ通知する）
   - 起動直後の 1 分待ちの間に選んでも、すぐに確認する
   - 確認している間にもう一度選ばれても、重ねて確認しない
-- **署名と検証**：exe にはコード署名をしていない（[6](#6-配布)）ため、ダウンロードした exe が本物かは HTTPS と GitHub を信頼して判断する。ブラウザーを通さずにダウンロードするので、Mark of the Web が付かず、SmartScreen の警告は出ない
+- **署名と検証**：exe にはコード署名をしていない（[6](#6-配布)）ため、ダウンロードした exe が本物かは HTTPS と GitHub を信頼し、`digest` と照合して判断する。リリースそのものを書き換えられると `digest` も変わるのでこの照合では防げないが、公開済みのリリースは Immutable releases（[6](#6-配布)）で書き換えられないようにしている。ブラウザーを通さずにダウンロードするので、Mark of the Web が付かず、SmartScreen の警告は出ない
 - 取得は WinHTTP（`windows` クレート）で行う。プロキシは OS の設定に従う。TLS も OS に任せられ、HTTP のクレートを足さずに済むため
 - 監視スレッドと同じく専用スレッドで行い、結果をチャネルと独自メッセージでメインスレッドに渡す
 
@@ -354,6 +354,8 @@ GitHub Releases に新しい版があれば、exe をダウンロードして置
 - GitHub Actions（`windows-latest`、`.github/workflows/release.yml`）で、`v*` のタグを push したらテストとリリースビルドを行い、exe と LICENSE を入れた `inzone-buds-switcher-<タグ>.zip` と、自動更新（[4.8](#48-自動更新)）が取ってくる exe 単体（`inzone-buds-switcher.exe`）を GitHub Releases に置く
   - タグが `Cargo.toml` の `version` と一致しない（`v0.1.0` と `0.1.0` のように）ときは失敗させる。exe の版とリリース名がずれるのを防ぐため
   - リリースノートは GitHub の自動生成を使う
+  - exe と zip にはビルドの来歴（attestation、`actions/attest-build-provenance`）を付ける。配布物がこのリポジトリのどのコミットから GitHub Actions でビルドされたかを、`gh attestation verify <ファイル> --repo kken0201/inzone-buds-switcher` で確かめられる
+  - リポジトリで Immutable releases を有効にしている。公開したリリースのファイルとタグは変えられないので、配布物を後から差し替えられない。公開後はファイルを足せないため、下書きの状態でファイルを上げてから公開する。リリースをやり直すときは版を上げる
 - PR では `.github/workflows/ci.yml` が `cargo test --locked` を走らせる。main のルールセットで、これが通らない PR はマージできないようにしている
 - 依存の更新は Dependabot（`.github/dependabot.yml`）が週 1 回 PR を作る。対象はクレートと GitHub Actions
   - 公開から 7 日たった版だけを提案させる。悪意のある版は公開後すぐに見つかって取り下げられることが多いため
