@@ -1,0 +1,53 @@
+name: dependabot
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  triage:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      # 自動でマージするのは、互換性が保たれるはずの更新だけ
+      # - クレートはパッチ更新のみ。0.x のクレートはマイナー更新で互換性が崩れるうえ、テストは実機の動作までは確かめられないため
+      # - Actions はメジャー更新以外
+      # グループの PR では update-type はいちばん大きい更新の種類になる
+      - id: policy
+        env:
+          AUTO_MERGE: >-
+            ${{
+              steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+              (steps.metadata.outputs.package-ecosystem == 'github_actions' &&
+               steps.metadata.outputs.update-type == 'version-update:semver-minor')
+            }}
+        run: echo "auto-merge=$AUTO_MERGE" >> "$GITHUB_OUTPUT"
+
+      # マージは ci の test が通るまで待つ（main のルールセットで必須にしている）
+      - if: steps.policy.outputs.auto-merge == 'true'
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
+
+      # 手で確かめる PR は、開かれたときに Discord に知らせる
+      # Dependabot の PR から動くワークフローは Actions のシークレットを読めないので、URL は Dependabot のシークレットに置く
+      - if: steps.policy.outputs.auto-merge != 'true' && github.event.action == 'opened'
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "::warning::DISCORD_WEBHOOK_URL が Dependabot のシークレットにないので通知しない"
+            exit 0
+          fi
+          jq -n --arg content "Dependabot の PR を確認してください: $PR_TITLE"$'\n'"$PR_URL" \
+            '{content: $content, allowed_mentions: {parse: []}}' |
+            curl --fail-with-body -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL"
