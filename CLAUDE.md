@@ -20,6 +20,7 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 - 作業計画とタスクは GitHub の Issue と [Project](https://github.com/users/kken0201/projects/2) で管理する。Milestone は使わない。docs/ には設計と仕様だけを書き、TODO や進捗は書かない
 - 実機で確認できた HID の仕様は docs/protocol.md に反映する
 - `hid/protocol.rs`（レポート解析）、`state.rs`（状態機械）、`switch.rs`（切り替え先の判断）、`tray/view.rs`（ツールチップとメニューの中身）、`update/release.rs`（更新の判断）は純粋関数にして単体テストを書く
+- `App` の振る舞い（イベントの列 → 切り替え・通知・設定の保存）は `src/app/scenarios.rs` のシナリオテストで確かめる。再生デバイスは `audio::Devices` の偽物に差し替える
 - コード中のコメントは日本語でよい
 
 ## コマンド

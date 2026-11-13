@@ -16,6 +16,7 @@ mod tray;
 mod update;
 
 use anyhow::{Result, bail};
+use audio::Devices;
 use hid::watch::HidEvent;
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 

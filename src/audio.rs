@@ -95,6 +95,21 @@ unsafe trait IPolicyConfig: IUnknown {
     fn set_endpoint_visibility(&self, device_id: PCWSTR, visible: i32) -> HRESULT;
 }
 
+/// `App` が使う再生デバイスの操作。シナリオテストでメモリ上の偽物に差し替えるために切り出している
+pub trait Devices {
+    /// 有効な再生デバイスの一覧
+    fn list(&self) -> Result<Vec<Endpoint>>;
+    /// 既定の再生デバイス（eConsole）のエンドポイント ID。なければ `None`
+    fn default_id(&self) -> Result<Option<String>>;
+    /// 既定の通信デバイス（eCommunications）のエンドポイント ID。なければ `None`
+    fn communications_id(&self) -> Result<Option<String>>;
+    /// eConsole と eMultimedia を設定する
+    fn set_default(&self, id: &str) -> Result<()>;
+    /// eCommunications を設定する
+    fn set_communications(&self, id: &str) -> Result<()>;
+}
+
+/// Core Audio による実装
 pub struct Audio {
     enumerator: IMMDeviceEnumerator,
 }
@@ -106,7 +121,32 @@ impl Audio {
         Ok(Self { enumerator })
     }
 
-    pub fn list(&self) -> Result<Vec<Endpoint>> {
+    fn default_for(&self, role: ERole) -> Result<Option<String>> {
+        unsafe {
+            let Ok(dev) = self.enumerator.GetDefaultAudioEndpoint(eRender, role) else {
+                return Ok(None);
+            };
+            let id = dev.GetId()?;
+            let s = id.to_string()?;
+            CoTaskMemFree(Some(id.0 as *const c_void));
+            Ok(Some(s))
+        }
+    }
+
+    fn set_roles(&self, id: &str, roles: &[ERole]) -> Result<()> {
+        let policy: IPolicyConfig =
+            unsafe { CoCreateInstance(&CLSID_POLICY_CONFIG_CLIENT, None, CLSCTX_ALL) }
+                .context("IPolicyConfig の作成に失敗")?;
+        let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
+        for &role in roles {
+            unsafe { policy.set_default_endpoint(PCWSTR(wide.as_ptr()), role).ok()? };
+        }
+        Ok(())
+    }
+}
+
+impl Devices for Audio {
+    fn list(&self) -> Result<Vec<Endpoint>> {
         unsafe {
             let devices = self.enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
             (0..devices.GetCount()?)
@@ -127,47 +167,20 @@ impl Audio {
         }
     }
 
-    /// 既定の再生デバイス（eConsole）のエンドポイント ID。なければ `None`
-    pub fn default_id(&self) -> Result<Option<String>> {
+    fn default_id(&self) -> Result<Option<String>> {
         self.default_for(eConsole)
     }
 
-    /// 既定の通信デバイス（eCommunications）のエンドポイント ID。なければ `None`
-    pub fn communications_id(&self) -> Result<Option<String>> {
+    fn communications_id(&self) -> Result<Option<String>> {
         self.default_for(eCommunications)
     }
 
-    fn default_for(&self, role: ERole) -> Result<Option<String>> {
-        unsafe {
-            let Ok(dev) = self.enumerator.GetDefaultAudioEndpoint(eRender, role) else {
-                return Ok(None);
-            };
-            let id = dev.GetId()?;
-            let s = id.to_string()?;
-            CoTaskMemFree(Some(id.0 as *const c_void));
-            Ok(Some(s))
-        }
-    }
-
-    /// eConsole と eMultimedia を設定する
-    pub fn set_default(&self, id: &str) -> Result<()> {
+    fn set_default(&self, id: &str) -> Result<()> {
         self.set_roles(id, &[eConsole, eMultimedia])
     }
 
-    /// eCommunications を設定する
-    pub fn set_communications(&self, id: &str) -> Result<()> {
+    fn set_communications(&self, id: &str) -> Result<()> {
         self.set_roles(id, &[eCommunications])
-    }
-
-    fn set_roles(&self, id: &str, roles: &[ERole]) -> Result<()> {
-        let policy: IPolicyConfig =
-            unsafe { CoCreateInstance(&CLSID_POLICY_CONFIG_CLIENT, None, CLSCTX_ALL) }
-                .context("IPolicyConfig の作成に失敗")?;
-        let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
-        for &role in roles {
-            unsafe { policy.set_default_endpoint(PCWSTR(wide.as_ptr()), role).ok()? };
-        }
-        Ok(())
     }
 }
 
