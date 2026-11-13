@@ -1,5 +1,5 @@
 //! HID イベントを状態機械に渡し、確定した変化に応じて出力を切り替える。
-//! COM を使うので、`ComGuard` を初期化したスレッドで使う。
+//! Core Audio（`Audio`）を使うときは COM が要るので、`ComGuard` を初期化したスレッドで使う。
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

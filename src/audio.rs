@@ -120,29 +120,6 @@ impl Audio {
             .context("IMMDeviceEnumerator の作成に失敗")?;
         Ok(Self { enumerator })
     }
-
-    fn default_for(&self, role: ERole) -> Result<Option<String>> {
-        unsafe {
-            let Ok(dev) = self.enumerator.GetDefaultAudioEndpoint(eRender, role) else {
-                return Ok(None);
-            };
-            let id = dev.GetId()?;
-            let s = id.to_string()?;
-            CoTaskMemFree(Some(id.0 as *const c_void));
-            Ok(Some(s))
-        }
-    }
-
-    fn set_roles(&self, id: &str, roles: &[ERole]) -> Result<()> {
-        let policy: IPolicyConfig =
-            unsafe { CoCreateInstance(&CLSID_POLICY_CONFIG_CLIENT, None, CLSCTX_ALL) }
-                .context("IPolicyConfig の作成に失敗")?;
-        let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
-        for &role in roles {
-            unsafe { policy.set_default_endpoint(PCWSTR(wide.as_ptr()), role).ok()? };
-        }
-        Ok(())
-    }
 }
 
 impl Devices for Audio {
@@ -181,6 +158,31 @@ impl Devices for Audio {
 
     fn set_communications(&self, id: &str) -> Result<()> {
         self.set_roles(id, &[eCommunications])
+    }
+}
+
+impl Audio {
+    fn default_for(&self, role: ERole) -> Result<Option<String>> {
+        unsafe {
+            let Ok(dev) = self.enumerator.GetDefaultAudioEndpoint(eRender, role) else {
+                return Ok(None);
+            };
+            let id = dev.GetId()?;
+            let s = id.to_string()?;
+            CoTaskMemFree(Some(id.0 as *const c_void));
+            Ok(Some(s))
+        }
+    }
+
+    fn set_roles(&self, id: &str, roles: &[ERole]) -> Result<()> {
+        let policy: IPolicyConfig =
+            unsafe { CoCreateInstance(&CLSID_POLICY_CONFIG_CLIENT, None, CLSCTX_ALL) }
+                .context("IPolicyConfig の作成に失敗")?;
+        let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
+        for &role in roles {
+            unsafe { policy.set_default_endpoint(PCWSTR(wide.as_ptr()), role).ok()? };
+        }
+        Ok(())
     }
 }
 

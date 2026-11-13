@@ -336,6 +336,27 @@ fn startup_connected_on_dongle_does_not_switch() {
     assert_eq!(s.default().as_deref(), Some("chat"));
 }
 
+/// 接続したまま PC を切り、ケースに入れたまま起動した。既定が Game のままだと音が出ないので戻す（docs/design.md 4.2）
+#[test]
+fn startup_in_case_restores_when_output_is_left_on_dongle() {
+    let mut s = Scenario::new("startup-case-on-dongle", Some(with_return("speaker")), "game");
+    let u = s.start(case());
+    assert_eq!(u.transition, Transition::Established { connected: false });
+    assert_eq!(u.outcomes, vec![Outcome::Restored(dev("speaker"))]);
+    assert_eq!(s.take_calls(), vec![Call::Default("speaker".into())]);
+}
+
+/// 耳に着けたまま起動した。既定がドングル以外なら Game に合わせ、直前の既定を戻し先として覚える
+#[test]
+fn startup_connected_switches_when_output_is_not_dongle() {
+    let mut s = Scenario::new("startup-connected-speaker", None, "speaker");
+    let u = s.start(out());
+    assert_eq!(u.transition, Transition::Established { connected: true });
+    assert_eq!(u.outcomes, vec![Outcome::Remembered(dev("speaker")), Outcome::Switched(dev("game"))]);
+    assert_eq!(s.take_calls(), vec![Call::Default("game".into())]);
+    assert_eq!(s.saved().disconnected_device, Some(dev("speaker")));
+}
+
 #[test]
 fn nothing_happens_until_earbuds_state_arrives() {
     let mut s = Scenario::new("unknown", Some(with_return("speaker")), "game");
