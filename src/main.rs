@@ -15,9 +15,11 @@ mod switch;
 mod tray;
 mod update;
 
+#[cfg(test)]
+mod testutil;
+
 use anyhow::{Result, bail};
 use audio::Devices;
-use hid::watch::HidEvent;
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 
 fn main() -> Result<()> {
@@ -92,71 +94,14 @@ fn check_update() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn log_update(u: &app::Update) {
-    use state::Transition;
-    use switch::{Outcome, Skip};
-    match u.transition {
-        Transition::Established { connected } => {
-            tracing::info!("状態確定: {}", if connected { "接続" } else { "切断" })
-        }
-        Transition::Lost => tracing::info!("状態不明（ドングルなし）"),
-        Transition::Changed { connected } => {
-            tracing::info!("状態変化: {}", if connected { "接続" } else { "切断" })
-        }
-    }
-    for o in &u.outcomes {
-        match o {
-            Outcome::Switched(d) => tracing::info!("{} に切り替えました", d.name),
-            Outcome::Restored(d) => tracing::info!("{} に戻しました", d.name),
-            Outcome::Remembered(d) => tracing::info!("切断時の出力を {} に設定しました", d.name),
-            Outcome::Skipped(Skip::Disabled) => tracing::info!("自動切り替えがオフ"),
-            Outcome::Skipped(Skip::UserChanged) => {
-                tracing::info!("既定デバイスが手動で変えられているため戻さない")
-            }
-            Outcome::Skipped(Skip::OnDongle) => {
-                tracing::info!("既定デバイスがすでにドングルのデバイスのため切り替えない")
-            }
-            Outcome::Skipped(Skip::NoGameDevice) => {
-                tracing::warn!("INZONE Buds - Game が見つからないため切り替えない")
-            }
-            Outcome::Skipped(Skip::NotConfigured) => tracing::warn!("切断時の出力が未設定です"),
-            Outcome::Skipped(Skip::Missing(d)) => {
-                tracing::warn!("{}（{}）が見つかりません", d.name, d.id)
-            }
-            Outcome::Failed(e) => tracing::warn!("出力を切り替えられませんでした: {e}"),
-        }
-    }
-}
-
 /// HID 監視スレッドのイベントをログに出し続ける
 fn watch() -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     hid::watch::spawn(tx);
     for ev in rx {
-        log_event(&ev);
+        ev.log();
     }
     Ok(())
-}
-
-pub(crate) fn log_event(ev: &HidEvent) {
-    match ev {
-        HidEvent::DongleFound => tracing::info!("ドングル検出"),
-        HidEvent::DongleLost => tracing::info!("ドングル切断"),
-        HidEvent::Earbuds(e) => {
-            tracing::info!("イヤホン L={} R={}", on_off(e.left), on_off(e.right))
-        }
-        HidEvent::Battery(b) => tracing::info!(
-            "バッテリー L={} R={} ケース={}（{}）",
-            tray::view::pct(b.left),
-            tray::view::pct(b.right),
-            tray::view::pct(b.case),
-            if b.earbuds().any() { "イヤホン接続中" } else { "両耳とも未接続" }
-        ),
-    }
-}
-
-fn on_off(b: bool) -> &'static str {
-    if b { "接続" } else { "切断" }
 }
 
 fn list() -> Result<()> {

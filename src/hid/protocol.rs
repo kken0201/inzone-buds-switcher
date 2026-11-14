@@ -6,6 +6,11 @@ const RX_MAGIC: [u8; 2] = [0x04, 0xFF];
 /// `[6..8]`。受信・送信とも共通
 const SIGNATURE: [u8; 2] = [0x96, 0xC3];
 
+/// 問い合わせのサブコマンド：左右の接続状態（応答は `14 02`）
+pub const SUB_LINK: u8 = 0x02;
+/// 問い合わせのサブコマンド：バッテリー（応答は `14 04`）
+pub const SUB_BATTERY: u8 = 0x04;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Earbuds {
     pub left: bool,
@@ -33,6 +38,11 @@ impl Battery {
     }
 }
 
+/// 表示用の残量。不明なら `--`
+pub fn pct(v: Option<u8>) -> String {
+    v.map_or("--".into(), |v| format!("{v}%"))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Report {
     /// `12 01`。自発送信のみ
@@ -57,7 +67,7 @@ pub struct Parsed {
     pub origin: Origin,
 }
 
-fn pct(v: u8) -> Option<u8> {
+fn level(v: u8) -> Option<u8> {
     (v <= 100).then_some(v)
 }
 
@@ -84,9 +94,9 @@ pub fn parse(buf: &[u8]) -> Option<Parsed> {
         (0x12, 0x01) => Report::Status(Earbuds { left: at(13)? == 1, right: at(14)? == 1 }),
         (0x14, 0x02) => Report::Link(Earbuds { left: at(43)? == 1, right: at(44)? == 1 }),
         (0x14, 0x04) => Report::Battery(Battery {
-            left: pct(at(14)?),
-            right: pct(at(16)?),
-            case: pct(at(18)?),
+            left: level(at(14)?),
+            right: level(at(16)?),
+            case: level(at(18)?),
         }),
         _ => Report::Other { kind, sub },
     };
@@ -99,7 +109,7 @@ fn checksum(data: &[u8]) -> u8 {
 }
 
 /// 問い合わせの出力レポートを作る。`len` は出力レポート長（レポート ID 込み）。
-/// `sub` = 0x04 がバッテリー、0x02 が接続状態
+/// `sub` は `SUB_LINK` や `SUB_BATTERY`
 pub fn build_query(len: usize, sub: u8, seq: u8) -> Vec<u8> {
     let mut r = vec![0u8; len.max(14)];
     r[..8].copy_from_slice(&[REPORT_ID, 0x0C, 0x01, 0x00, 0xFC, 0x08, SIGNATURE[0], SIGNATURE[1]]);

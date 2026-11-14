@@ -247,13 +247,7 @@ fn cleanup(paths: &Paths) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("inzone-buds-switcher-test-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use crate::testutil::temp_dir;
 
     fn read(p: &Path) -> String {
         std::fs::read_to_string(p).unwrap()

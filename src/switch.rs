@@ -1,6 +1,6 @@
 //! 接続・切断時にどの出力へ切り替えるかの判断（docs/design.md 4.3）。純粋関数。
 
-use crate::audio::{DongleKind, Endpoint};
+use crate::audio::{DongleKind, Endpoint, find_kind};
 use crate::config::{Config, DeviceRef};
 
 /// 切り替えた・切り替えなかった結果。通知（docs/design.md 4.5）と 1 対 1 に対応する
@@ -44,16 +44,12 @@ fn find<'a>(endpoints: &'a [Endpoint], id: &str) -> Option<&'a Endpoint> {
     endpoints.iter().find(|e| e.id == id)
 }
 
-fn device_ref(e: &Endpoint) -> DeviceRef {
-    DeviceRef { id: e.id.clone(), name: e.name.clone() }
-}
-
 fn on_dongle(endpoints: &[Endpoint], id: Option<&str>) -> bool {
     id.and_then(|id| find(endpoints, id)).is_some_and(|e| e.kind.is_some())
 }
 
 fn present(endpoints: &[Endpoint], dev: &DeviceRef) -> Result<DeviceRef, Skip> {
-    find(endpoints, &dev.id).map(device_ref).ok_or_else(|| Skip::Missing(dev.clone()))
+    find(endpoints, &dev.id).map(Endpoint::device_ref).ok_or_else(|| Skip::Missing(dev.clone()))
 }
 
 /// 切り替え前の既定デバイスのエンドポイント ID
@@ -78,6 +74,10 @@ impl<D> Plan<D> {
     fn disabled() -> Self {
         Self { default: Err(Skip::Disabled), communications: None }
     }
+
+    pub fn map<E>(self, f: impl FnOnce(D) -> E) -> Plan<E> {
+        Plan { default: self.default.map(f), communications: self.communications }
+    }
 }
 
 pub fn on_connect(config: &Config, endpoints: &[Endpoint], current: Current) -> Plan<Connect> {
@@ -86,7 +86,7 @@ pub fn on_connect(config: &Config, endpoints: &[Endpoint], current: Current) -> 
     }
     let communications = config
         .switch_communications
-        .then(|| endpoints.iter().find(|e| e.kind == Some(DongleKind::Chat)).map(device_ref))
+        .then(|| find_kind(endpoints, DongleKind::Chat).map(Endpoint::device_ref))
         .flatten();
     Plan { default: connect_default(config, endpoints, current.default), communications }
 }
@@ -115,18 +115,14 @@ fn connect_default(
 ) -> Result<Connect, Skip> {
     let to = match &config.connected_device {
         Some(dev) => present(endpoints, dev)?,
-        None => endpoints
-            .iter()
-            .find(|e| e.kind == Some(DongleKind::Game))
-            .map(device_ref)
-            .ok_or(Skip::NoGameDevice)?,
+        None => find_kind(endpoints, DongleKind::Game).map(Endpoint::device_ref).ok_or(Skip::NoGameDevice)?,
     };
     let remember = match config.disconnected_device {
         Some(_) => None,
         None => current
             .and_then(|id| find(endpoints, id))
             .filter(|e| e.kind.is_none())
-            .map(device_ref),
+            .map(Endpoint::device_ref),
     };
     Ok(Connect { to, remember })
 }
@@ -172,22 +168,7 @@ fn disconnect_communications(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn ep(id: &str, kind: Option<DongleKind>) -> Endpoint {
-        Endpoint { id: id.into(), name: format!("{id} name"), kind }
-    }
-
-    fn dev(id: &str) -> DeviceRef {
-        DeviceRef { id: id.into(), name: format!("{id} name") }
-    }
-
-    fn endpoints() -> Vec<Endpoint> {
-        vec![
-            ep("speaker", None),
-            ep("chat", Some(DongleKind::Chat)),
-            ep("game", Some(DongleKind::Game)),
-        ]
-    }
+    use crate::testutil::{dev, endpoints, ep};
 
     fn cur<'a>(default: Option<&'a str>, communications: Option<&'a str>) -> Current<'a> {
         Current { default, communications }

@@ -72,13 +72,7 @@ pub fn for_outcome(outcome: &Outcome, config: &Config) -> Option<Notice> {
         Outcome::Failed(_) => (Kind::Warning, "⚠ 出力を切り替えられませんでした".into()),
         Outcome::Skipped(Skip::Disabled | Skip::UserChanged | Skip::OnDongle) => return None,
     };
-    let enabled = match kind {
-        Kind::Switch => config.notify_switch,
-        Kind::Warning => true,
-        Kind::Battery => config.notify_battery,
-        Kind::Update => true,
-    };
-    enabled.then_some(Notice { kind, text })
+    (kind != Kind::Switch || config.notify_switch).then_some(Notice { kind, text })
 }
 
 pub fn for_low_battery(alert: LowAlert, config: &Config) -> Option<Notice> {

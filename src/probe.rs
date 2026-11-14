@@ -15,10 +15,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-use crate::hid::protocol::{Origin, Report, build_query, hex, parse, trim_zeros};
-use crate::hid::{self, Device, PID, VID};
-
-const HUB_USAGE_PAGE: u16 = 0xFF04;
+use crate::hid::protocol::{Origin, Report, SUB_BATTERY, build_query, hex, parse, pct, trim_zeros};
+use crate::hid::{self, Device, HUB_USAGE_PAGE, PID, VID};
 
 static OUT: Mutex<()> = Mutex::new(());
 
@@ -71,9 +69,9 @@ fn annotate(d: &[u8]) -> String {
         Origin::Spontaneous => "-".to_string(),
         Origin::Response { seq } => seq.to_string(),
     };
-    let pct = |v: Option<u8>| v.map_or("--".to_string(), |v| format!("{v}%"));
     match p.report {
         Report::Status(e) => format!("  # 状態? L={} R={}", e.left as u8, e.right as u8),
+        Report::Link(e) => format!("  # 接続? seq={seq} L={} R={}", e.left as u8, e.right as u8),
         Report::Battery(b) => format!(
             "  # バッテリー? seq={seq} L={} R={} C={}",
             pct(b.left),
@@ -92,6 +90,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     out!("# {} 個の HID コレクション", cols.len());
+    let wants_tx = opts.battery_interval.is_some() || !opts.queries.is_empty();
     let mut handles = Vec::new();
     let mut hub_writer = None;
     for (idx, c) in cols.iter().enumerate() {
@@ -100,7 +99,7 @@ pub fn run(args: &[String]) -> Result<()> {
             "# [{idx}] {tag} in={} out={} feature={} {}",
             c.input_len, c.output_len, c.feature_len, c.path
         );
-        if (opts.battery_interval.is_some() || !opts.queries.is_empty()) && c.usage_page == HUB_USAGE_PAGE && hub_writer.is_none() {
+        if wants_tx && c.usage_page == HUB_USAGE_PAGE && hub_writer.is_none() {
             // 書き込みは別のハンドルで行う。同期 I/O では、同じハンドルの read が終わるまで write が待たされるため
             match Device::open(&c.path) {
                 Ok(d) => hub_writer = Some((d, c.output_len as usize)),
@@ -120,7 +119,6 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     out!("# 開始（Ctrl+C で終了）");
 
-    let wants_tx = opts.battery_interval.is_some() || !opts.queries.is_empty();
     match hub_writer {
         None if wants_tx => out!("# usage_page 0xFF04 のコレクションを開けないので問い合わせできません"),
         None => {}
@@ -144,7 +142,7 @@ pub fn run(args: &[String]) -> Result<()> {
             }
             if let Some(iv) = opts.battery_interval {
                 loop {
-                    send(0x04, seq);
+                    send(SUB_BATTERY, seq);
                     seq = seq.wrapping_add(1);
                     if iv == 0 {
                         break;

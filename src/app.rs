@@ -6,13 +6,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::audio::{Audio, Devices, DongleKind, Endpoint};
-use crate::config::{self, Config, DeviceRef};
+use crate::audio::{Audio, Devices, DongleKind, Endpoint, find_kind};
+use crate::config::{self, Config};
 use crate::hid::protocol::Battery;
 use crate::hid::watch::HidEvent;
 use crate::notify::{self, LowAlert, LowFlags};
 use crate::state::{Link, Machine, Obs, Transition};
-use crate::switch::{self, Current, Outcome, Skip};
+use crate::switch::{self, Connect, Current, Outcome, Skip};
 
 /// `D` は再生デバイスの操作。通常は Core Audio（`Audio`）で、シナリオテストではメモリ上の偽物に差し替える
 pub struct App<D: Devices = Audio> {
@@ -144,46 +144,40 @@ impl<D: Devices> App<D> {
 
     /// `established` は Unknown から決まったとき（docs/design.md 4.2）
     fn switch(&mut self, connected: bool, established: bool) -> Vec<Outcome> {
-        let (endpoints, default) = match self.endpoints() {
-            Ok(v) => v,
-            Err(e) => return vec![Outcome::Failed(format!("再生デバイスを取得できません: {e:#}"))],
-        };
-        let communications = match self.audio.communications_id() {
+        let (endpoints, default, communications) = match self.snapshot() {
             Ok(v) => v,
             Err(e) => return vec![Outcome::Failed(format!("再生デバイスを取得できません: {e:#}"))],
         };
         let current = Current { default: default.as_deref(), communications: communications.as_deref() };
-        let (default, communications, done): (Result<(DeviceRef, Option<DeviceRef>), Skip>, _, fn(DeviceRef) -> Outcome) =
-            if connected {
-                let plan = if established {
-                    switch::on_established_connect(&self.config, &endpoints, current)
-                } else {
-                    switch::on_connect(&self.config, &endpoints, current)
-                };
-                (plan.default.map(|c| (c.to, c.remember)), plan.communications, Outcome::Switched)
+        let plan = if connected {
+            let c = &self.config;
+            if c.auto_switch && c.switch_communications && find_kind(&endpoints, DongleKind::Chat).is_none() {
+                tracing::warn!("Chat のデバイスが見つからないため、既定の通信デバイスは切り替えません");
+            }
+            if established {
+                switch::on_established_connect(c, &endpoints, current)
             } else {
-                let plan = switch::on_disconnect(&self.config, &endpoints, current);
-                (plan.default.map(|to| (to, None)), plan.communications, Outcome::Restored)
-            };
-        let no_chat = !endpoints.iter().any(|e| e.kind == Some(DongleKind::Chat));
-        if connected && self.config.auto_switch && self.config.switch_communications && no_chat {
-            tracing::warn!("Chat のデバイスが見つからないため、既定の通信デバイスは切り替えません");
-        }
+                switch::on_connect(c, &endpoints, current)
+            }
+        } else {
+            switch::on_disconnect(&self.config, &endpoints, current).map(|to| Connect { to, remember: None })
+        };
         let mut outcomes = Vec::new();
-        match default {
+        match plan.default {
             Err(skip) => outcomes.push(Outcome::Skipped(skip)),
-            Ok((to, remember)) => {
+            Ok(Connect { to, remember }) => {
                 if let Some(dev) = remember {
                     self.update_config(|c| c.disconnected_device = Some(dev.clone()));
                     outcomes.push(Outcome::Remembered(dev));
                 }
                 outcomes.push(match self.audio.set_default(&to.id) {
-                    Ok(()) => done(to),
+                    Ok(()) if connected => Outcome::Switched(to),
+                    Ok(()) => Outcome::Restored(to),
                     Err(e) => Outcome::Failed(format!("{} に切り替えられません: {e:#}", to.name)),
                 });
             }
         }
-        if let Some(to) = communications {
+        if let Some(to) = plan.communications {
             match self.audio.set_communications(&to.id) {
                 Ok(()) => tracing::info!("既定の通信デバイスを {} に切り替えました", to.name),
                 Err(e) => outcomes.push(Outcome::Failed(format!(
@@ -194,6 +188,46 @@ impl<D: Devices> App<D> {
         }
         outcomes
     }
+
+    /// 再生デバイスの一覧と、既定の再生デバイス・既定の通信デバイスの ID
+    fn snapshot(&self) -> Result<(Vec<Endpoint>, Option<String>, Option<String>)> {
+        let (endpoints, default) = self.endpoints()?;
+        Ok((endpoints, default, self.audio.communications_id()?))
+    }
+}
+
+impl Update {
+    pub fn log(&self) {
+        match self.transition {
+            Transition::Established { connected } => tracing::info!("状態確定: {}", link_label(connected)),
+            Transition::Lost => tracing::info!("状態不明（ドングルなし）"),
+            Transition::Changed { connected } => tracing::info!("状態変化: {}", link_label(connected)),
+        }
+        for o in &self.outcomes {
+            match o {
+                Outcome::Switched(d) => tracing::info!("{} に切り替えました", d.name),
+                Outcome::Restored(d) => tracing::info!("{} に戻しました", d.name),
+                Outcome::Remembered(d) => tracing::info!("切断時の出力を {} に設定しました", d.name),
+                Outcome::Skipped(Skip::Disabled) => tracing::info!("自動切り替えがオフ"),
+                Outcome::Skipped(Skip::UserChanged) => {
+                    tracing::info!("既定デバイスが手動で変えられているため戻さない")
+                }
+                Outcome::Skipped(Skip::OnDongle) => {
+                    tracing::info!("既定デバイスがすでにドングルのデバイスのため切り替えない")
+                }
+                Outcome::Skipped(Skip::NoGameDevice) => {
+                    tracing::warn!("INZONE Buds - Game が見つからないため切り替えない")
+                }
+                Outcome::Skipped(Skip::NotConfigured) => tracing::warn!("切断時の出力が未設定です"),
+                Outcome::Skipped(Skip::Missing(d)) => tracing::warn!("{}（{}）が見つかりません", d.name, d.id),
+                Outcome::Failed(e) => tracing::warn!("出力を切り替えられませんでした: {e}"),
+            }
+        }
+    }
+}
+
+fn link_label(connected: bool) -> &'static str {
+    if connected { "接続" } else { "切断" }
 }
 
 #[cfg(test)]

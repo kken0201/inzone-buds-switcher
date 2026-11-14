@@ -10,12 +10,13 @@ use anyhow::{Result, bail};
 
 use super::{App, Update};
 use crate::audio::{Devices, DongleKind, Endpoint};
-use crate::config::{self, Config, DeviceRef};
+use crate::config::{self, Config};
 use crate::hid::protocol::{Battery, Earbuds};
 use crate::hid::watch::HidEvent;
 use crate::notify::{self, Kind, LowAlert};
 use crate::state::{Link, Transition};
 use crate::switch::{Outcome, Skip};
+use crate::testutil::{dev, endpoints, ep, temp_dir};
 
 /// 既定の設定のデバウンス（`debounce_ms`）
 const DEBOUNCE: u64 = 1500;
@@ -80,19 +81,6 @@ impl Devices for Fake {
     }
 }
 
-fn ep(id: &str, kind: Option<DongleKind>) -> Endpoint {
-    Endpoint { id: id.into(), name: format!("{id} name"), kind }
-}
-
-fn dev(id: &str) -> DeviceRef {
-    DeviceRef { id: id.into(), name: format!("{id} name") }
-}
-
-/// スピーカーと、ドングルの Chat・Game
-fn endpoints() -> Vec<Endpoint> {
-    vec![ep("speaker", None), ep("chat", Some(DongleKind::Chat)), ep("game", Some(DongleKind::Game))]
-}
-
 fn buds(left: bool, right: bool) -> HidEvent {
     HidEvent::Earbuds(Earbuds { left, right })
 }
@@ -115,10 +103,7 @@ struct Scenario {
 impl Scenario {
     /// `config` が `Some` なら設定ファイルに書いてから起動する。既定の出力は `default`、通信デバイスも同じにする
     fn new(name: &str, config: Option<Config>, default: &str) -> Self {
-        let dir = std::env::temp_dir()
-            .join(format!("inzone-buds-switcher-scenario-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let path = dir.join("config.json");
+        let path = temp_dir(&format!("scenario-{name}")).join("config.json");
         if let Some(c) = config {
             config::save(&path, &c).unwrap();
         }
