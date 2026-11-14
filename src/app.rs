@@ -232,3 +232,6 @@ fn link_label(connected: bool) -> &'static str {
 
 #[cfg(test)]
 mod scenarios;
+
+#[cfg(test)]
+mod model;
