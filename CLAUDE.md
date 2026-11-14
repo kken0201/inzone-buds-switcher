@@ -21,6 +21,7 @@ Sony INZONE Buds（USB ドングル接続）のイヤホンが接続/切断さ�
 - 実機で確認できた HID の仕様は docs/protocol.md に反映する
 - `hid/protocol.rs`（レポート解析）、`state.rs`（状態機械）、`switch.rs`（切り替え先の判断）、`tray/view.rs`（ツールチップとメニューの中身）、`update/release.rs`（更新の判断）は純粋関数にして単体テストを書く
 - `App` の振る舞い（イベントの列 → 切り替え・通知・設定の保存）は `src/app/scenarios.rs` のシナリオテストで確かめる。再生デバイスは `audio::Devices` の偽物に差し替える
+- イベントの順序によらず出力が接続状態に落ち着くことは、`src/app/model.rs` のモデル検査で確かめる。`state.rs`・`switch.rs`・`app.rs`・`hid/watch.rs`・`tray/mod.rs` のイベント処理を変えたら、[.claude/skills/verify-output-alignment/SKILL.md](.claude/skills/verify-output-alignment/SKILL.md) に従って走らせる
 - コード中のコメントは日本語でよい
 
 ## コマンド
@@ -37,6 +38,7 @@ cargo run -- list                         # 再生デバイスの一覧（既定
 cargo run -- set <id> [--communications]  # 既定の再生デバイスを設定
 cargo run -- check-update                 # 最新のリリースを問い合わせる（置き換えはしない）
 cargo test -- --ignored                   # ネットワークに出るテストも走らせる
+cargo test --release model::              # 出力の切り替えのモデル検査だけを走らせる
 cargo build --release                     # 配布用 exe
 ```
 
