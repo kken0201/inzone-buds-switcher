@@ -1,12 +1,12 @@
 //! HID イベントを状態機械に渡し、確定した変化に応じて出力を切り替える。
-//! COM を使うので、`ComGuard` を初期化したスレッドで使う。
+//! Core Audio（`Audio`）を使うときは COM が要るので、`ComGuard` を初期化したスレッドで使う。
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::audio::{Audio, DongleKind, Endpoint};
+use crate::audio::{Audio, Devices, DongleKind, Endpoint};
 use crate::config::{self, Config, DeviceRef};
 use crate::hid::protocol::Battery;
 use crate::hid::watch::HidEvent;
@@ -14,10 +14,11 @@ use crate::notify::{self, LowAlert, LowFlags};
 use crate::state::{Link, Machine, Obs, Transition};
 use crate::switch::{self, Current, Outcome, Skip};
 
-pub struct App {
+/// `D` は再生デバイスの操作。通常は Core Audio（`Audio`）で、シナリオテストではメモリ上の偽物に差し替える
+pub struct App<D: Devices = Audio> {
     config: Config,
     config_path: PathBuf,
-    audio: Audio,
+    audio: D,
     machine: Machine,
     dongle: bool,
     /// 最後に届いたバッテリー。切断された側は None にする
@@ -36,10 +37,16 @@ pub struct Update {
 
 impl App {
     pub fn new(config_path: PathBuf) -> Result<Self> {
+        Ok(Self::with_devices(config_path, Audio::new()?))
+    }
+}
+
+impl<D: Devices> App<D> {
+    pub fn with_devices(config_path: PathBuf, audio: D) -> Self {
         let config = config::load(&config_path);
         let machine = Machine::new(Duration::from_millis(config.debounce_ms));
-        Ok(Self {
-            audio: Audio::new()?,
+        Self {
+            audio,
             config,
             config_path,
             machine,
@@ -47,7 +54,7 @@ impl App {
             battery: None,
             low: LowFlags::default(),
             low_alert: None,
-        })
+        }
     }
 
     pub fn config(&self) -> &Config {
@@ -188,3 +195,6 @@ impl App {
         outcomes
     }
 }
+
+#[cfg(test)]
+mod scenarios;
