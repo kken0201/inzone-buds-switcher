@@ -22,10 +22,14 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     ReadFile, WriteFile,
 };
-use windows::core::PCWSTR;
+use windows::core::{HSTRING, PCWSTR};
 
 pub const VID: u16 = 0x054C;
 pub const PID: u16 = 0x0EC2;
+
+/// 状態レポートとバッテリーの問い合わせに使うベンダー定義コレクション（docs/protocol.md）
+pub const HUB_USAGE_PAGE: u16 = 0xFF04;
+pub const HUB_USAGE: u16 = 0x0001;
 
 #[derive(Debug, Clone)]
 pub struct Collection {
@@ -36,10 +40,6 @@ pub struct Collection {
     pub input_len: u16,
     pub output_len: u16,
     pub feature_len: u16,
-}
-
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// 接続中のドングルの HID コレクションを列挙する
@@ -90,18 +90,8 @@ fn interface_paths() -> Result<Vec<String>> {
 
 /// アクセス権 0 で開いて usage を調べる（文字列ディスクリプタは問い合わせない）
 fn query_caps(path: &str) -> Option<Collection> {
-    let w = wide(path);
+    let h = open_shared(path, 0, FILE_FLAGS_AND_ATTRIBUTES(0)).ok()?;
     unsafe {
-        let h = CreateFileW(
-            PCWSTR(w.as_ptr()),
-            0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            None,
-            OPEN_EXISTING,
-            FILE_FLAGS_AND_ATTRIBUTES(0),
-            None,
-        )
-        .ok()?;
         let mut pp = PHIDP_PREPARSED_DATA::default();
         let mut result = None;
         if HidD_GetPreparsedData(h, &mut pp) {
@@ -123,6 +113,19 @@ fn query_caps(path: &str) -> Option<Collection> {
     }
 }
 
+/// INZONE Hub などほかのアプリと同時に開けるよう、共有モードで開く
+fn open_shared(path: &str, access: u32, flags: FILE_FLAGS_AND_ATTRIBUTES) -> Result<HANDLE> {
+    unsafe {
+        CreateFileW(&HSTRING::from(path), access, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, flags, None)
+    }
+    .with_context(|| format!("{path} を開けません"))
+}
+
+/// 読み書き用に開く
+fn open_rw(path: &str, flags: FILE_FLAGS_AND_ATTRIBUTES) -> Result<HANDLE> {
+    open_shared(path, (GENERIC_READ | GENERIC_WRITE).0, flags)
+}
+
 /// 開いた HID コレクション。読み書きはブロッキング（同期 I/O）
 pub struct Device {
     handle: HANDLE,
@@ -132,22 +135,8 @@ pub struct Device {
 unsafe impl Send for Device {}
 
 impl Device {
-    /// 読み書き用に共有モードで開く（INZONE Hub などほかのアプリと同時に開けるようにする）
     pub fn open(path: &str) -> Result<Self> {
-        let w = wide(path);
-        let handle = unsafe {
-            CreateFileW(
-                PCWSTR(w.as_ptr()),
-                (GENERIC_READ | GENERIC_WRITE).0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAGS_AND_ATTRIBUTES(0),
-                None,
-            )
-        }
-        .with_context(|| format!("{path} を開けません"))?;
-        Ok(Self { handle })
+        Ok(Self { handle: open_rw(path, FILE_FLAGS_AND_ATTRIBUTES(0))? })
     }
 
     /// 入力レポートを 1 つ読む。`buf` は入力レポート長（レポート ID 込み）以上にする

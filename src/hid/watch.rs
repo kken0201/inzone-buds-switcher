@@ -11,25 +11,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_DEVICE_NOT_CONNECTED, ERROR_IO_PENDING, GENERIC_READ, GENERIC_WRITE, HANDLE,
-    WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, ERROR_DEVICE_NOT_CONNECTED, ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, ReadFile,
-    WriteFile,
-};
+use windows::Win32::Storage::FileSystem::{FILE_FLAG_OVERLAPPED, ReadFile, WriteFile};
 use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Threading::{CreateEventW, ResetEvent, WaitForSingleObject};
-use windows::core::PCWSTR;
 
-use super::protocol::{Battery, Earbuds, Origin, Report, build_query, hex, parse, trim_zeros};
-use super::{Collection, enumerate, wide};
-
-const HUB_USAGE_PAGE: u16 = 0xFF04;
-const HUB_USAGE: u16 = 0x0001;
-
-const SUB_LINK: u8 = 0x02;
-const SUB_BATTERY: u8 = 0x04;
+use super::protocol::{
+    Battery, Earbuds, Origin, Report, SUB_BATTERY, SUB_LINK, build_query, hex, parse, pct, trim_zeros,
+};
+use super::{Collection, HUB_USAGE, HUB_USAGE_PAGE, enumerate, open_rw};
 
 const BATTERY_POLL: Duration = Duration::from_secs(30);
 const REENUMERATE: Duration = Duration::from_secs(3);
@@ -47,6 +38,24 @@ pub enum HidEvent {
     Earbuds(Earbuds),
     /// `14 04`。左右が None なら未接続（`Battery::earbuds()`）
     Battery(Battery),
+}
+
+impl HidEvent {
+    pub fn log(&self) {
+        let on_off = |b: bool| if b { "接続" } else { "切断" };
+        match self {
+            Self::DongleFound => tracing::info!("ドングル検出"),
+            Self::DongleLost => tracing::info!("ドングル切断"),
+            Self::Earbuds(e) => tracing::info!("イヤホン L={} R={}", on_off(e.left), on_off(e.right)),
+            Self::Battery(b) => tracing::info!(
+                "バッテリー L={} R={} ケース={}（{}）",
+                pct(b.left),
+                pct(b.right),
+                pct(b.case),
+                if b.earbuds().any() { "イヤホン接続中" } else { "両耳とも未接続" }
+            ),
+        }
+    }
 }
 
 pub fn spawn(tx: Sender<HidEvent>) -> JoinHandle<()> {
@@ -184,21 +193,8 @@ enum WriteError {
 }
 
 impl Port {
-    /// INZONE Hub などと同時に開けるよう共有モードで開く
     fn open(path: &str) -> Result<Self> {
-        let w = wide(path);
-        let handle = unsafe {
-            CreateFileW(
-                PCWSTR(w.as_ptr()),
-                (GENERIC_READ | GENERIC_WRITE).0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAG_OVERLAPPED,
-                None,
-            )
-        }
-        .with_context(|| format!("{path} を開けません"))?;
+        let handle = open_rw(path, FILE_FLAG_OVERLAPPED)?;
         match unsafe { CreateEventW(None, true, false, None) } {
             Ok(event) => Ok(Self { handle, event }),
             Err(e) => {
@@ -218,10 +214,10 @@ impl Port {
         let mut ov = self.overlapped();
         unsafe {
             let _ = ResetEvent(self.event);
-            if let Err(e) = WriteFile(self.handle, Some(&buf), None, Some(&mut *ov)) {
-                if e.code() != ERROR_IO_PENDING.to_hresult() {
-                    return Err(WriteError::Failed(e));
-                }
+            if let Err(e) = WriteFile(self.handle, Some(&buf), None, Some(&mut *ov))
+                && e.code() != ERROR_IO_PENDING.to_hresult()
+            {
+                return Err(WriteError::Failed(e));
             }
             if WaitForSingleObject(self.event, IO_TIMEOUT_MS) == WAIT_OBJECT_0 {
                 let mut n = 0u32;
@@ -268,12 +264,10 @@ impl Reader {
         if !self.pending {
             unsafe {
                 let _ = ResetEvent(self.port.event);
-                if let Err(e) =
-                    ReadFile(self.port.handle, Some(&mut self.buf), None, Some(&mut *self.ov))
+                if let Err(e) = ReadFile(self.port.handle, Some(&mut self.buf), None, Some(&mut *self.ov))
+                    && e.code() != ERROR_IO_PENDING.to_hresult()
                 {
-                    if e.code() != ERROR_IO_PENDING.to_hresult() {
-                        return Err(e).context("ReadFile 失敗");
-                    }
+                    return Err(e).context("ReadFile 失敗");
                 }
             }
             self.pending = true;

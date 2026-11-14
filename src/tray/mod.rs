@@ -30,11 +30,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ASFW_ANY, AllowSetForegroundWindow, SetForegroundWindow, SetTimer, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
     WINDOW_EX_STYLE, WM_APP, WM_CONTEXTMENU, WM_DESTROY, WM_NULL, WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
 };
-use windows::core::{PCWSTR, w};
+use windows::core::{HSTRING, PCWSTR, w};
 
 use crate::app::{App, Update};
-use crate::notify::{self, Kind, Notice};
+use crate::hid::protocol::pct;
 use crate::hid::watch::HidEvent;
+use crate::notify::{self, Kind, Notice};
 use crate::update;
 use icon::Icons;
 use view::{Command, Icon, Item, Setting, Status};
@@ -311,11 +312,11 @@ unsafe fn render(items: &[Item], commands: &mut Vec<Command>) -> Result<HMENU> {
                             0
                         }
                     };
-                    AppendMenuW(menu, flags, id, PCWSTR(wide(text).as_ptr()))?
+                    AppendMenuW(menu, flags, id, &HSTRING::from(text.as_str()))?
                 }
                 Item::Submenu { text, items } => {
                     let sub = render(items, commands)?;
-                    AppendMenuW(menu, MF_STRING | MF_POPUP, sub.0 as usize, PCWSTR(wide(text).as_ptr()))?
+                    AppendMenuW(menu, MF_STRING | MF_POPUP, sub.0 as usize, &HSTRING::from(text.as_str()))?
                 }
             }
         }
@@ -331,25 +332,24 @@ fn copy_wide(dst: &mut [u16], src: &str) {
     }
 }
 
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(Some(0)).collect()
-}
-
 impl Tray {
     fn drain(&mut self) {
         while let Ok(ev) = self.rx.try_recv() {
-            crate::log_event(&ev);
+            ev.log();
             let update = self.app.handle(ev, Instant::now());
             self.report(update);
         }
-        self.rearm();
-        self.show();
-        self.restart_if_idle();
+        self.settle();
     }
 
     fn tick(&mut self) {
         let update = self.app.tick(Instant::now());
         self.report(update);
+        self.settle();
+    }
+
+    /// 状態が変わりうる処理のあとに呼ぶ。タイマー・表示・保留中の再起動を今の状態に合わせる
+    fn settle(&mut self) {
         self.rearm();
         self.show();
         self.restart_if_idle();
@@ -382,14 +382,14 @@ impl Tray {
     /// 更新をログに残し、通知する
     fn report(&mut self, update: Option<Update>) {
         if let Some(u) = update {
-            crate::log_update(&u);
+            u.log();
             let config = self.app.config().clone();
             for n in u.outcomes.iter().filter_map(|o| notify::for_outcome(o, &config)) {
                 self.balloon(&n);
             }
         }
         if let Some(a) = self.app.take_low_battery() {
-            tracing::info!("バッテリー低下: L={} R={}", view::pct(a.left), view::pct(a.right));
+            tracing::info!("バッテリー低下: L={} R={}", pct(a.left), pct(a.right));
             if let Some(n) = notify::for_low_battery(a, self.app.config()) {
                 self.balloon(&n);
             }

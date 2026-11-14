@@ -1,9 +1,9 @@
 //! トレイのツールチップとメニューの中身（docs/design.md 4.4）。純粋関数。
 //! Win32 の描画は `tray` が行い、ここは何を出すかだけを決める。
 
-use crate::audio::Endpoint;
+use crate::audio::{DongleKind, Endpoint, find_kind};
 use crate::config::{Config, DeviceRef};
-use crate::hid::protocol::Battery;
+use crate::hid::protocol::{Battery, pct};
 use crate::state::Link;
 
 use super::shape::{Gauge, STEPS};
@@ -91,10 +91,6 @@ pub enum Item {
 
 const NO_BATTERY: Battery = Battery { left: None, right: None, case: None };
 
-pub fn pct(v: Option<u8>) -> String {
-    v.map_or("--".into(), |v| format!("{v}%"))
-}
-
 pub fn tooltip(battery: Option<Battery>) -> String {
     let b = battery.unwrap_or(NO_BATTERY);
     format!("INZONE Buds  L {} / R {} / C {}", pct(b.left), pct(b.right), pct(b.case))
@@ -135,10 +131,6 @@ fn entry(text: impl Into<String>, checked: bool, command: Command) -> Item {
     Item::Entry { text: text.into(), checked, command: Some(command) }
 }
 
-fn device_ref(e: &Endpoint) -> DeviceRef {
-    DeviceRef { id: e.id.clone(), name: e.name.clone() }
-}
-
 /// `checked` の ID が一覧にないときは、設定されていることが分かるよう選べない項目で示す
 fn device_list(
     candidates: &[&Endpoint],
@@ -149,7 +141,7 @@ fn device_list(
         .iter()
         .map(|e| {
             let on = checked.is_some_and(|c| c.id == e.id);
-            entry(e.name.clone(), on, Command::Set(command(device_ref(e))))
+            entry(e.name.clone(), on, Command::Set(command(e.device_ref())))
         })
         .collect();
     if let Some(c) = checked.filter(|c| !candidates.iter().any(|e| e.id == c.id)) {
@@ -176,13 +168,13 @@ pub fn menu(
     let b = battery.unwrap_or(NO_BATTERY);
     let all: Vec<&Endpoint> = endpoints.iter().collect();
     // 未設定のときに接続時に使われるのは Game なので、それに印を付ける
-    let game = endpoints.iter().find(|e| e.kind == Some(crate::audio::DongleKind::Game)).map(device_ref);
+    let game = find_kind(endpoints, DongleKind::Game).map(Endpoint::device_ref);
     let connected = config.connected_device.clone().or(game);
     // ドングルのデバイスは切断時の出力に選べない（docs/design.md 4.3）
     let non_dongle: Vec<&Endpoint> = endpoints.iter().filter(|e| e.kind.is_none()).collect();
     let use_current = current
         .and_then(|id| non_dongle.iter().find(|e| e.id == id))
-        .map(|e| Command::Set(Setting::DisconnectedDevice(device_ref(e))));
+        .map(|e| Command::Set(Setting::DisconnectedDevice(e.device_ref())));
 
     vec![
         label(format!("INZONE Buds: {}", status.label())),
@@ -228,19 +220,7 @@ pub fn menu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::DongleKind;
-
-    fn ep(id: &str, kind: Option<DongleKind>) -> Endpoint {
-        Endpoint { id: id.into(), name: format!("{id} name"), kind }
-    }
-
-    fn dev(id: &str) -> DeviceRef {
-        DeviceRef { id: id.into(), name: format!("{id} name") }
-    }
-
-    fn endpoints() -> Vec<Endpoint> {
-        vec![ep("speaker", None), ep("chat", Some(DongleKind::Chat)), ep("game", Some(DongleKind::Game))]
-    }
+    use crate::testutil::{dev, endpoints};
 
     fn submenu<'a>(items: &'a [Item], name: &str) -> &'a [Item] {
         items

@@ -15,8 +15,9 @@ use windows::Win32::System::Com::{
     CoUninitialize, STGM_READ,
 };
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
-use windows::core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, PCWSTR};
+use windows::core::{GUID, HRESULT, HSTRING, IUnknown, IUnknown_Vtbl, PCWSTR};
 
+use crate::config::DeviceRef;
 use crate::hid::{PID, VID};
 
 /// エンドポイントを提供している USB インターフェイスのインスタンス ID を持つ非公開のプロパティ。
@@ -45,6 +46,18 @@ pub struct Endpoint {
     pub name: String,
     /// ドングル以外は `None`
     pub kind: Option<DongleKind>,
+}
+
+impl Endpoint {
+    /// 設定に保存する形。名前は今の表示名にする
+    pub fn device_ref(&self) -> DeviceRef {
+        DeviceRef { id: self.id.clone(), name: self.name.clone() }
+    }
+}
+
+/// ドングルの再生デバイスのうち、種類が `kind` の最初のもの
+pub fn find_kind(endpoints: &[Endpoint], kind: DongleKind) -> Option<&Endpoint> {
+    endpoints.iter().find(|e| e.kind == Some(kind))
 }
 
 pub fn dongle_kind(instance_id: &str) -> Option<DongleKind> {
@@ -178,9 +191,9 @@ impl Audio {
         let policy: IPolicyConfig =
             unsafe { CoCreateInstance(&CLSID_POLICY_CONFIG_CLIENT, None, CLSCTX_ALL) }
                 .context("IPolicyConfig の作成に失敗")?;
-        let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
+        let id = HSTRING::from(id);
         for &role in roles {
-            unsafe { policy.set_default_endpoint(PCWSTR(wide.as_ptr()), role).ok()? };
+            unsafe { policy.set_default_endpoint(PCWSTR(id.as_ptr()), role).ok()? };
         }
         Ok(())
     }
