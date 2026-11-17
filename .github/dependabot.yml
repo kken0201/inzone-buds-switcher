@@ -7,9 +7,15 @@ updates:
     # 公開から 7 日たった版だけを提案する。悪意のある版は公開後すぐに見つかって取り下げられることが多いため
     cooldown:
       default-days: 7
+    # windows-core は windows と同じ版でないとビルドが通らない（版が違うと COM の型が互いのトレイトを実装しない）。
+    # windows-core だけが先に新しい版を出すことがあるので、patch 以外の更新は提案させない。
+    # windows の更新の PR が来たら、windows-core も同じ版に手で上げる
+    ignore:
+      - dependency-name: windows-core
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     # 依存は最初に当てはまったグループに入る
     groups:
-      # windows と windows-core は版をそろえないとビルドが通らないので、更新の種類によらず一緒に上げる
+      # windows と windows-core の patch は一緒に上げる
       windows:
         patterns: ["windows", "windows-core"]
       cargo-patch:
